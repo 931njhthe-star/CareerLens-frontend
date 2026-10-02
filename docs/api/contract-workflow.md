@@ -15,8 +15,12 @@
 이는 전달 파일의 최소 검증입니다. 경로별 요청·응답 스키마, `$ref` 해석, 호환성까지 검사하는 전체 OpenAPI 검증은 포함하지 않습니다.
 검증에 실패하면 기존 명세와 버전 기록을 변경하지 않습니다. 검증 성공 후 임시 파일을 통해 각 파일을 교체합니다.
 
-실제 API와 명세는 아직 없으므로 현재 `openapi.json`, `contract-lock.json`은 만들지 않았습니다.
-API 클라이언트와 TypeScript 타입 생성기도 아직 구현하지 않았습니다.
+`src/shared/api/openapi.json`, `contract-lock.json`에 실제 API snapshot을 동기화했습니다.
+공통 요청 처리는 `src/shared/api/client.js`에 구현했습니다. 런타임은 브라우저 기본 JavaScript이며 TypeScript 타입 생성기는 사용하지 않습니다.
+
+현재 화면은 버전 **1.1.0**의 인증·워크스페이스 계약을 사용합니다. `.env`의 `BACKEND_URL`은 이 계약을 구현한 CareerLens API origin입니다. 프론트엔드 프록시 주소만 바꾸어 임의의 API나 Supabase REST endpoint가 이 계약을 충족하게 되지는 않습니다. 별도 API를 쓰는 팀은 같은 세션·CSRF·요청·응답 계약을 제공하거나 백엔드에 어댑터를 구현해야 합니다. 각자의 DB URL과 외부 API 키는 백엔드 `.env`에서 설정합니다.
+
+연결·쿠키·OAuth·HTTPS 구성은 [실행 안내](../../README.md)의 인증·쿠키·HTTPS 절을 따릅니다. 원본 DB나 개인 계정·설정은 계약 snapshot에 포함하지 않습니다. 해시 일치는 파일이 고정된 계약과 같은지를 검사할 뿐, 연결된 API가 실제로 구현되어 있거나 가동 중임을 보증하지 않습니다.
 
 ## 백엔드에서 프론트엔드로 전달하는 순서
 
@@ -30,7 +34,7 @@ API 클라이언트와 TypeScript 타입 생성기도 아직 구현하지 않았
 프론트엔드 저장소에서 실행하는 예시입니다. 버전과 입력 파일은 백엔드에서 전달한 실제 값으로 바꿉니다.
 
 ```powershell
-node scripts/sync-api-contract.mjs --source "C:\api-contracts\openapi-0.1.0.json" --version "0.1.0"
+node scripts/sync-api-contract.mjs --source "./openapi-1.1.0.json" --version "1.1.0"
 node scripts/sync-api-contract.mjs --check
 ```
 

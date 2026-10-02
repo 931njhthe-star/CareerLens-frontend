@@ -1,0 +1,146 @@
+"""No live API, database, credentials or external network needed."""
+from email.message import Message
+from pathlib import Path
+import json
+import os
+import tempfile
+import unittest
+from unittest.mock import patch
+from urllib.error import URLError
+
+import server
+
+
+class UpstreamResponse:
+    def __init__(self, status=200, headers=(), body=b'{"user":null}'):
+        self.code = status
+        self.headers = Message()
+        self.headers['Content-Type'] = 'application/json'
+        for key, value in headers:
+            self.headers[key] = value
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class Opener:
+    def __init__(self, response=None, error=None):
+        self.response = response or UpstreamResponse()
+        self.error = error
+        self.calls = []
+
+    def open(self, request, timeout):
+        self.calls.append((request, timeout))
+        if self.error:
+            raise self.error
+        return self.response
+
+
+class ServerTests(unittest.TestCase):
+    def app(self, origin='', opener=None):
+        with patch.dict(os.environ, {}, clear=True), patch('server.build_opener', return_value=opener or Opener()):
+            return server.create_app(origin)
+
+    def test_origin_validation(self):
+        for value in ('http://localhost:5101', 'http://127.0.0.1:5101/', 'http://[::1]:5101', 'https://api.example.com', 'https://127.0.0.1:8443'):
+            with self.subTest(value=value):
+                self.assertTrue(server.validate_origin(value))
+        for value in ('http://api.example.com', 'ftp://localhost', 'https://user:password@api.example.com',
+                      'https://api.example.com/api/v1', 'https://api.example.com?key=value',
+                      'https://api.example.com/#secret', 'https://api.example.com:0',
+                      'https://api.example.com:99999', 'https://bad\\host', 'https://bad%20host',
+                      'https://bad_host', 'https://api.example.com\n', '//api.example.com', 'https://'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                server.validate_origin(value)
+
+    def test_unconfigured_and_unavailable_apis_are_errors(self):
+        app = self.app()
+        with app.test_client() as client:
+            with client.get('/') as index:
+                self.assertEqual(index.status_code, 200)
+            self.assertFalse(client.get('/health').json['backend_configured'])
+            response = client.get('/api/v1/auth/session')
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json['error']['code'], 'backend_unconfigured')
+        app = self.app('https://api.example.com', Opener(error=URLError('offline')))
+        response = app.test_client().get('/api/v1/auth/session')
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json['error']['code'], 'backend_unavailable')
+
+    def test_proxy_keeps_csrf_origin_cookie_and_uses_api_host(self):
+        opener = Opener()
+        with self.app('https://api.example.com', opener).test_client() as client:
+            client.set_cookie('careerlens_session', 'test-session')
+            response = client.post('/api/v1/auth/login?case=1', json={'email': 'student@example.com'},
+                                   headers={'Origin': 'http://localhost', 'X-CSRF-Token': 'test-csrf'})
+        self.assertEqual(response.status_code, 200)
+        request, timeout = opener.calls[0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(request.full_url, 'https://api.example.com/api/v1/auth/login?case=1')
+        self.assertEqual(request.host, 'api.example.com')
+        self.assertNotIn('host', headers)
+        self.assertEqual(headers['origin'], 'http://localhost')
+        self.assertEqual(headers['x-csrf-token'], 'test-csrf')
+        self.assertIn('careerlens_session=test-session', headers['cookie'])
+        self.assertEqual(json.loads(request.data), {'email': 'student@example.com'})
+        self.assertEqual(timeout, 60)
+
+    def test_cookie_domain_removed_security_attributes_and_multiple_headers_preserved(self):
+        upstream = UpstreamResponse(headers=[
+            ('Set-Cookie', 'session=one; Domain=api.example.com; Path=/; Secure; HttpOnly; SameSite=Lax'),
+            ('Set-Cookie', 'state=two; DOMAIN=.example.com; Path=/api; Secure; SameSite=None'),
+        ])
+        response = self.app('https://api.example.com', Opener(upstream)).test_client().get('/api/v1/auth/session')
+        cookies = response.headers.getlist('Set-Cookie')
+        self.assertEqual(len(cookies), 2)
+        self.assertEqual(cookies[0], 'session=one; Path=/; Secure; HttpOnly; SameSite=Lax')
+        self.assertEqual(cookies[1], 'state=two; Path=/api; Secure; SameSite=None')
+
+    def test_api_redirects_stay_local_and_oauth_provider_redirect_is_not_followed(self):
+        for destination, expected in (
+            ('https://api.example.com/api/v1/auth/callback?code=test', '/api/v1/auth/callback?code=test'),
+            ('https://api.example.com:443/?auth_error=test', '/?auth_error=test'),
+            ('/?reset_token=test', '/?reset_token=test'),
+            ('https://accounts.google.com/o/oauth2/auth?state=test', 'https://accounts.google.com/o/oauth2/auth?state=test'),
+            ('https://api.example.com.evil.test/', 'https://api.example.com.evil.test/'),
+        ):
+            with self.subTest(destination=destination):
+                opener = Opener(UpstreamResponse(302, [('Location', destination)]))
+                response = self.app('https://api.example.com', opener).test_client().get('/api/v1/auth/oauth/google')
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.headers['Location'], expected)
+                self.assertEqual(len(opener.calls), 1)
+        self.assertIsNone(server.NoRedirect().redirect_request(None, None, 302, '', {}, 'https://accounts.google.com'))
+
+    def test_env_file_is_not_executed_and_external_environment_wins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / '.env'
+            path.write_text('# team settings\nBACKEND_URL="https://api.example.com"\nFRONTEND_PORT=5100\nLITERAL=$(not-a-command)\n', encoding='utf-8')
+            with patch.dict(os.environ, {'BACKEND_URL': 'http://127.0.0.1:7777'}, clear=True):
+                server.load_local_env(path)
+                self.assertEqual(os.environ['BACKEND_URL'], 'http://127.0.0.1:7777')
+                self.assertEqual(os.environ['FRONTEND_PORT'], '5100')
+                self.assertEqual(os.environ['LITERAL'], '$(not-a-command)')
+
+    def test_explicit_argument_overrides_environment_and_static_files_do_not_expose_env(self):
+        opener = Opener()
+        with patch.dict(os.environ, {'BACKEND_URL': 'https://ignored.example.com'}, clear=True), patch('server.build_opener', return_value=opener):
+            app = server.create_app('http://127.0.0.1:7777')
+        client = app.test_client()
+        client.get('/api/v1/auth/session')
+        self.assertTrue(opener.calls[0][0].full_url.startswith('http://127.0.0.1:7777/'))
+        self.assertEqual(client.get('/.env').status_code, 404)
+        self.assertEqual(client.get('/src/.env').status_code, 404)
+        with client.get('/favicon.svg') as favicon:
+            self.assertEqual(favicon.status_code, 200)
+
+
+if __name__ == '__main__':
+    unittest.main()

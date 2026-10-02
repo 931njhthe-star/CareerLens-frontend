@@ -32,6 +32,23 @@ test-results/
 # Logs
 *.log
 
+# Python static server
+__pycache__/
+*.py[cod]
+.venv/
+.runtime/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite*
+*.key
+*.pem
+*.eml
+
 # OS files
 .DS_Store
 Thumbs.db
