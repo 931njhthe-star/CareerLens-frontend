@@ -9,7 +9,7 @@
   padding: 23px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #f6f7f4;
+  background: var(--canvas);
 }
 
 .evaluation-axis__heading h3 {
@@ -64,7 +64,7 @@
 }
 
 .evaluation-demo-notice {
-  color: #e8d6a9;
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.8;
 }
@@ -93,7 +93,7 @@
 
 .score-pyramid__reading dd[data-unavailable='true'] {
   font-size: 17px;
-  color: #c4ceba;
+  color: var(--muted);
 }
 
 .score-pyramid__reading dd[data-unavailable='true']::after {

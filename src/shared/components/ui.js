@@ -1,3 +1,5 @@
+import { opportunityPath } from '../../features/job-postings/opportunity-state.js';
+
 export const escapeHtml = (value = '') =>
   String(value ?? '').replace(
     /[&<>"']/g,
@@ -79,7 +81,7 @@ function renderWorkflowStep(item, index, currentStep) {
   const number = index + 1;
   const active = currentStep === number;
   const tag = item.enabled ? 'a' : 'span';
-  const navigation = item.enabled ? `href="#/${item.path}"` : 'aria-disabled="true"';
+  const navigation = item.enabled ? `href="#/${escapeHtml(item.path)}"` : 'aria-disabled="true"';
   const classes = ['step', active && 'active', !item.enabled && 'disabled']
     .filter(Boolean)
     .join(' ');
@@ -98,23 +100,34 @@ function renderWorkflowStep(item, index, currentStep) {
 }
 
 function renderWorkflowSteps(draft, page) {
-  const step = page === 'resume' ? 1 : ['job', 'opportunities', 'preparing'].includes(page) ? 2 : 3;
-  const desiredRole = draft.analysis_mode === 'desired_role';
-  const prepared = desiredRole ? !!draft.preparation?.complete : !!draft.job_text;
+  const step = { resume: 1, 'desired-role': 2, job: 2, opportunities: 3 }[page] || 4;
   const target = draft.career_target;
+  const prepared = !!(
+    draft.selected_posting_id ||
+    draft.job_text ||
+    draft.preparation?.complete ||
+    draft.report ||
+    draft.report_locked
+  );
   const steps = [
     { label: '이력서', path: 'resume', icon: 'file', enabled: true },
     {
-      label: '채용 공고',
-      path: 'job',
-      icon: 'briefcase',
-      enabled: !!draft.resume_text || draft.guest,
+      label: '희망 직무',
+      path: 'desired-role',
+      icon: 'lens',
+      enabled: !!draft.resume_text || !!draft.guest,
     },
     {
-      label: '모의지원',
+      label: '채용공고',
+      path: target?.role_id ? opportunityPath(target) : 'jobs',
+      icon: 'briefcase',
+      enabled: !!target?.role_id,
+    },
+    {
+      label: '모의 지원',
       path: 'practice',
       icon: 'report',
-      enabled: prepared || !!target?.role_id,
+      enabled: prepared,
     },
   ];
 
@@ -127,25 +140,30 @@ function renderWorkflowSteps(draft, page) {
   `;
 }
 
-export function renderPrimaryNav(page = '') {
-  const current = ['job', 'jobs', 'opportunities', 'preparing'].includes(page)
-    ? 'job'
-    : ['practice', 'questions', 'result'].includes(page)
-      ? 'practice'
-      : page;
+export function renderPrimaryNav(page = '', draft = {}) {
+  // Global destinations describe product areas; only the workflow bar tracks inner steps.
+  const current = {
+    intro: 'intro',
+    resume: 'resume',
+    jobs: 'jobs',
+    opportunities: 'jobs',
+    practice: 'practice',
+    result: 'practice',
+  }[page];
+  const target = draft.career_target;
   const items = [
-    { path: 'intro', label: '소개' },
-    { path: 'resume', label: '이력서' },
-    { path: 'job', label: '채용공고' },
-    { path: 'practice', label: '모의 지원' },
+    { key: 'intro', path: 'intro', label: '소개' },
+    { key: 'resume', path: 'resume', label: '이력서' },
+    { key: 'jobs', path: target?.role_id ? opportunityPath(target) : 'jobs', label: '채용공고' },
+    { key: 'practice', path: 'practice', label: '모의 지원' },
   ];
 
   return `
     <nav class="primary-nav" aria-label="주요 메뉴">
       ${items
         .map(
-          ({ path, label }) => `
-        <a href="#/${path}" ${current === path ? 'aria-current="page"' : ''}>${label}</a>
+          ({ key, path, label }) => `
+        <a href="#/${escapeHtml(path)}" ${current === key ? 'aria-current="page"' : ''}>${label}</a>
       `,
         )
         .join('')}
@@ -183,11 +201,11 @@ export function shell(content, { user, draft = {}, page = 'resume' } = {}) {
         <span class="brand-symbol">${icon('lens', 23)}</span>
         Career<b>Lens</b>
       </a>
-      ${renderPrimaryNav(page)}
+      ${renderPrimaryNav(page, draft)}
       <div class="account-menu">${renderAccountMenu(user)}</div>
     </header>
     <div class="app-shell">
-      ${['resume', 'job', 'opportunities', 'questions', 'result', 'preparing'].includes(page) ? renderWorkflowSteps(draft, page) : ''}
+      ${['resume', 'desired-role', 'job', 'opportunities', 'practice', 'questions', 'result', 'preparing'].includes(page) ? renderWorkflowSteps(draft, page) : ''}
       <div
         id="notices"
         class="notices"

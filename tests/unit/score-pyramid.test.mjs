@@ -7,6 +7,7 @@ import {
 } from '../../src/features/analysis/status-radar-data.js';
 import {
   pyramidPoints,
+  pyramidFraming,
   PYRAMID_VERTICES,
   PYRAMID_EDGES,
 } from '../../tools/matching-eye/src/pyramid-geometry.ts';
@@ -87,6 +88,43 @@ test('morph is continuous, has eased endpoints and can reverse from an intermedi
   assert.deepEqual(pyramidTransition(midway, a, 0), midway);
   assert.deepEqual(pyramidTransition(midway, a, 1), a);
   assert.ok(pyramidTransition(a, b, 0.001)[0] - a[0] < 0.000001);
+});
+
+test('fixed rotation framing centers the silhouette and keeps maximum hover and zoom in bounds', () => {
+  for (const [width, height] of [
+    [264, 260],
+    [360, 320],
+    [520, 320],
+    [800, 320],
+  ]) {
+    for (const pitch of [-0.32, 0.08, 0.48]) {
+      const frame = pyramidFraming(width, height, pitch);
+      const extent = [];
+      for (let step = 0; step < 192; step++) {
+        const yaw = (step / 192) * Math.PI * 2;
+        for (const zoom of [0.85, 1, 1.16]) {
+          const points = PYRAMID_VERTICES.map(([x, y, z]) => {
+            const rx = x * Math.cos(yaw) + z * Math.sin(yaw);
+            const rz = -x * Math.sin(yaw) + z * Math.cos(yaw);
+            const ry = y * Math.cos(pitch) - rz * Math.sin(pitch);
+            const depth = y * Math.sin(pitch) + rz * Math.cos(pitch);
+            const perspective = 5.6 / (5.6 - depth);
+            return {
+              x: width / 2 + rx * perspective * frame.scale * zoom,
+              y: height / 2 + (-ry * perspective - frame.centerY) * frame.scale * zoom,
+            };
+          });
+          for (const point of points) {
+            assert.ok(point.x > 22 && point.x < width - 22);
+            assert.ok(point.y > 22 && point.y < height - 22);
+          }
+          if (zoom === 1) extent.push(...points.map((point) => point.y));
+        }
+      }
+      assert.ok(Math.abs((Math.min(...extent) + Math.max(...extent)) / 2 - height / 2) < 0.2);
+      if (width >= 520) assert.ok(Math.max(...extent) - Math.min(...extent) > height * 0.65);
+    }
+  }
 });
 
 test('report marks demo values clearly, preserves missing badges and omits legacy score claims', () => {

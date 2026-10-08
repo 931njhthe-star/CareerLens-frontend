@@ -35,7 +35,7 @@ const draft = {
 };
 
 test('all workspace views keep uploaded/user/report content as text', () => {
-  for (const page of ['resume', 'job', 'questions', 'result']) {
+  for (const page of ['resume', 'desired-role', 'result']) {
     const markup = workspacePage(page, draft, [
       { id: 'experience', prompt: payload, reason: payload },
     ]);

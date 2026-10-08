@@ -243,7 +243,7 @@ function renderAuthForm(page, session) {
   }
 }
 
-export function renderAuth(page, session) {
+export function renderAuth(page, session, draft = {}) {
   const [title, description] = screens[page] || screens.login;
   const form = renderAuthForm(page, session);
   return `
@@ -255,7 +255,7 @@ export function renderAuth(page, session) {
           <span class="brand-symbol">${icon('lens', 23)}</span>
           Career<b>Lens</b>
         </a>
-        ${renderPrimaryNav(page)}
+        ${renderPrimaryNav(page, draft)}
       </header>
       <main
         id="main"

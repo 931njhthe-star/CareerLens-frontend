@@ -15,9 +15,9 @@ const controller = readFileSync(new URL('../../src/app/main.js', import.meta.url
 function recoveryFixture(getSession, response = {}) {
   const requests = [];
   const context = vm.createContext({
-    document: { getElementById: () => ({}) },
+    document: { getElementById: () => ({ dataset: {} }) },
     window: { addEventListener() {} },
-    location: { search: '', hash: '#/questions' },
+    location: { search: '', hash: '#/jobs/chosen-posting' },
     URLSearchParams,
     setTimeout() {},
     clearTimeout() {},
@@ -73,12 +73,12 @@ function assertFormerMemberRemoved(state) {
   assert.equal(state.selectedPosting, null);
   assert.equal(state.selectionOwner, null);
   assert.equal(state.returnAfterLogin, null);
-  const anonymousJobPage = workspacePage(
-    'job',
-    draftForPage('job', state.workspace.draft, state.edits),
+  const anonymousRolePage = workspacePage(
+    'desired-role',
+    draftForPage('desired-role', state.workspace.draft, state.edits),
     [],
   );
-  assert.ok(!anonymousJobPage.includes('FORMER_MEMBER_PRIVATE'));
+  assert.ok(!anonymousRolePage.includes('FORMER_MEMBER_PRIVATE'));
 }
 
 test('401 recovery clears member content before refresh and restores only allowlisted guest data', async () => {
@@ -128,7 +128,7 @@ for (const when of ['before claim', 'during claim']) {
   test(`expired guest ${when} cannot open an older member report as the new result`, async () => {
     const location = { search: '', hash: '#/email' };
     const context = vm.createContext({
-      document: { getElementById: () => ({}) },
+      document: { getElementById: () => ({ dataset: {} }) },
       window: { addEventListener() {} },
       location,
       URLSearchParams,

@@ -1,5 +1,6 @@
 import { normalizeAnalysis } from './analysis-state.ts';
 import { AnalysisEyeRenderer, EYE_BACKGROUND } from './analysis-renderer.ts';
+import type { AnalysisEyePalette } from './analysis-renderer.ts';
 import {
   AnalysisTimeline,
   ANALYSIS_FOLD_MS,
@@ -113,7 +114,7 @@ function makeFallback(transparentSurface: boolean, descriptors: AnalysisFibre[])
   const outlines: SVGGeometryElement[] = ['M-352 0Q0-365 352 0', 'M352 0Q0 365-352 0'].map((d) =>
     svgElement('path', {
       d,
-      stroke: transparentSurface ? '#d0d6bf' : '#a5ad98',
+      stroke: `var(--eye-outline, ${transparentSurface ? '#d0d6bf' : '#a5ad98'})`,
       fill: 'none',
       'stroke-width': transparentSurface ? '1.6' : '1',
       pathLength: '100',
@@ -122,11 +123,15 @@ function makeFallback(transparentSurface: boolean, descriptors: AnalysisFibre[])
   group.append(...outlines);
   const fibres = descriptors.map((descriptor): FallbackFibre => {
     const path = svgElement('path', {
-      fill: '#d9b77c',
+      fill: 'var(--eye-fiber, #d9b77c)',
       'data-fibre-group': descriptor.group,
       'data-fibre-id': String(descriptor.id),
     });
-    const tip = svgElement('circle', { r: '.65', fill: '#fff0c7', opacity: '0' });
+    const tip = svgElement('circle', {
+      r: '.65',
+      fill: 'var(--eye-highlight, #fff0c7)',
+      opacity: '0',
+    });
     group.append(path, tip);
     return { descriptor, path, tip };
   });
@@ -134,7 +139,7 @@ function makeFallback(transparentSurface: boolean, descriptors: AnalysisFibre[])
     const pupil = transparentSurface && radius === 61;
     const ring = svgElement('circle', {
       r: String(radius),
-      stroke: pupil ? '#e5c273' : '#6c705e',
+      stroke: pupil ? 'var(--eye-highlight, #e5c273)' : 'var(--eye-outline, #6c705e)',
       fill: 'none',
       'stroke-width': pupil ? '1.3' : '.65',
       pathLength: '100',
@@ -142,7 +147,10 @@ function makeFallback(transparentSurface: boolean, descriptors: AnalysisFibre[])
     outlines.push(ring);
     group.append(ring);
   }
-  if (!transparentSurface) group.append(svgElement('circle', { r: '60', fill: EYE_BACKGROUND }));
+  if (!transparentSurface)
+    group.append(
+      svgElement('circle', { r: '60', fill: `var(--eye-background, ${EYE_BACKGROUND})` }),
+    );
   svg.append(group);
   return { svg, group, outlines, fibres };
 }
@@ -150,6 +158,7 @@ function makeFallback(transparentSurface: boolean, descriptors: AnalysisFibre[])
 export interface AnalysisEyeOptions {
   surface?: 'card' | 'overlay';
   purpose?: AnalysisPurpose;
+  palette?: AnalysisEyePalette;
 }
 
 /** Actual API stages control completion; only their presentation has a minimum duration. */
@@ -157,7 +166,11 @@ export function mountAnalysisEye(
   container: HTMLElement,
   initial?: unknown,
   options: AnalysisEyeOptions = {},
-): { update(value: unknown): void; finish(): Promise<void>; dispose(): void } {
+): {
+  update(value: unknown): void;
+  finish(options?: { fold?: boolean }): Promise<void>;
+  dispose(): void;
+} {
   mounts.get(container)?.();
   const startedAt = performance.now();
   const timeline = new AnalysisTimeline(startedAt);
@@ -176,6 +189,20 @@ export function mountAnalysisEye(
   const abort = new AbortController();
   const { signal } = abort;
   const root = element('div', 'cl-analysis-eye');
+  for (const key of ['fiber', 'highlight', 'outline', 'background', 'panel', 'text'] as const) {
+    const color = options.palette?.[key];
+    if (color) root.style.setProperty(`--eye-${key}`, color);
+  }
+  if (options.palette?.outline) {
+    root.style.setProperty(
+      '--eye-panel-border',
+      'color-mix(in srgb, var(--eye-outline) 32%, transparent)',
+    );
+    root.style.setProperty(
+      '--eye-divider',
+      'color-mix(in srgb, var(--eye-outline) 18%, transparent)',
+    );
+  }
   root.dataset.surface = transparentSurface ? 'overlay' : 'card';
   root.dataset.purpose = purpose;
   const style = element('style');
@@ -212,7 +239,9 @@ export function mountAnalysisEye(
   const note = element(
     'p',
     'cl-analysis-eye__note',
-    '금빛 선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.',
+    options.palette?.fiber
+      ? '선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.'
+      : '금빛 선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.',
   );
   visual.append(canvas);
   scene.append(visual, leaders, panelList);
@@ -226,6 +255,7 @@ export function mountAnalysisEye(
   let frameRequest = 0;
   let finishTimer = 0;
   let finishRequested = false;
+  let foldOnFinish = true;
   let finished = false;
   let finishPromise: Promise<void> | null = null;
   let resolveFinish: (() => void) | null = null;
@@ -350,7 +380,10 @@ export function mountAnalysisEye(
     });
   }
   function settle(now: number): void {
-    if (!finishRequested || finished || !snapshot.complete || !timeline.finished(now)) return;
+    const ready = foldOnFinish
+      ? timeline.finished(now)
+      : timeline.readyAt !== null && now >= timeline.readyAt;
+    if (!finishRequested || finished || !snapshot.complete || !ready) return;
     finished = true;
     stopFrame();
     clearTimeout(finishTimer);
@@ -363,7 +396,7 @@ export function mountAnalysisEye(
   function draw(now = performance.now()): void {
     if (disposed) return;
     const fill = timeline.progress(now);
-    const fold = finishRequested ? timeline.fold(now) : 0;
+    const fold = finishRequested && foldOnFinish ? timeline.fold(now) : 0;
     const elapsed = Math.max(0, now - startedAt);
     const presented =
       (groupFibreProgress(panelFibres, fill, 'resume') +
@@ -417,7 +450,7 @@ export function mountAnalysisEye(
               .map((step) => edge(step, -1))
               .join('L')}Z`,
           );
-          path.setAttribute('fill', snapshot.hasError ? '#ad7560' : '#d9b77c');
+          path.setAttribute('fill', snapshot.hasError ? '#ad7560' : 'var(--eye-fiber, #d9b77c)');
           path.setAttribute(
             'opacity',
             String(
@@ -485,7 +518,7 @@ export function mountAnalysisEye(
           ? '분석을 정리하고 보고서를 완성합니다.'
           : '분석을 정리하고 모의지원을 준비합니다.'
         : purpose === 'report'
-          ? '이력서와 답변을 분석하고 있어요.'
+          ? '이력서와 채용공고를 분석하고 있어요.'
           : '이력서와 희망 직무를 살펴보고 있어요.';
     if (!snapshot.complete && finishPromise && !finished) {
       clearTimeout(finishTimer);
@@ -497,17 +530,19 @@ export function mountAnalysisEye(
     }
     resume();
   }
-  function finish(): Promise<void> {
+  function finish(options: { fold?: boolean } = {}): Promise<void> {
     if (disposed) return Promise.reject(new DOMException('Analysis view disposed', 'AbortError'));
     if (!snapshot.complete)
       return Promise.reject(new Error('All analysis stages must complete before finishing.'));
     if (finishPromise) return finishPromise;
+    foldOnFinish = options.fold !== false;
     finishRequested = true;
     finishPromise = new Promise<void>((resolve, reject) => {
       resolveFinish = resolve;
       rejectFinish = reject;
     });
-    const deadline = (timeline.readyAt ?? performance.now()) + ANALYSIS_FOLD_MS;
+    const deadline =
+      (timeline.readyAt ?? performance.now()) + (foldOnFinish ? ANALYSIS_FOLD_MS : 0);
     const check = () => {
       if (disposed) return;
       draw();
@@ -531,7 +566,7 @@ export function mountAnalysisEye(
     { signal },
   );
   try {
-    renderer = new AnalysisEyeRenderer(canvas, transparentSurface, panelFibres);
+    renderer = new AnalysisEyeRenderer(canvas, transparentSurface, panelFibres, options.palette);
     container.dataset.renderer = 'webgl';
     const bounds = visual.getBoundingClientRect();
     renderer.resize(Math.max(1, bounds.width), Math.max(1, bounds.height));

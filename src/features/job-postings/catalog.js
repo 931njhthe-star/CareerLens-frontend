@@ -118,7 +118,18 @@ export async function bindCatalog({
       }
     }),
   );
-  document.getElementById('select-posting')?.addEventListener('click', () => onSelect(posting));
+  document.getElementById('select-posting')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      await onSelect(posting);
+    } catch (error) {
+      if (current()) await onError(error);
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  });
   document.getElementById('delete-posting')?.addEventListener('click', async (event) => {
     if (
       !window.confirm(

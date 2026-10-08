@@ -43,7 +43,7 @@ export function questionsEditor(draft, questions) {
       <div class="form-actions">
         <a
           class="back-link"
-          href="#/job">
+          href="#/desired-role">
           희망 직무 수정
         </a>
         <button

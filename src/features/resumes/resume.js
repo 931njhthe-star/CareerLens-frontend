@@ -58,9 +58,9 @@ export function resumeEditor(draft) {
         <div class="form-actions">
           <span class="quiet">다음 단계에서 희망 직무를 선택합니다.</span>
           <button
-            class="button primary"
+            class="button primary workflow-next"
             type="submit">
-            채용공고 선택 ${icon('arrow', 18)}
+            희망 직무 선택 ${icon('arrow', 18)}
           </button>
         </div>
       </form>

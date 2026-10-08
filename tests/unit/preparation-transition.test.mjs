@@ -202,3 +202,32 @@ test('navigation during the real minimum hold cannot complete the presentation',
   await cancelled;
   assert.equal(completed, 0);
 });
+
+test('the report particle bridge waits for a full eye without folding or restarting four seconds', async () => {
+  const gauge = deferred();
+  let completed = false;
+  const completion = finishPreparationPresentation({
+    eye: {
+      finish: (options) => {
+        assert.deepEqual(options, { fold: false });
+        return gauge.promise;
+      },
+    },
+    startedAt: 100,
+    now: () => 7400,
+    signal: new AbortController().signal,
+    fold: false,
+    wait: (duration) => {
+      assert.equal(duration, 0);
+      return Promise.resolve();
+    },
+    onComplete: () => {
+      completed = true;
+    },
+  });
+  await nextTurn();
+  assert.equal(completed, false, 'real analysis completion alone cannot truncate the gauge');
+  gauge.resolve();
+  await completion;
+  assert.equal(completed, true);
+});

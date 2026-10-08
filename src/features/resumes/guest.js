@@ -30,7 +30,7 @@ export function guestResumePage(metadata = '') {
         </div>
         <div class="form-actions guest-resume__actions">
           <span class="quiet">다음 단계에서 희망 직무를 선택합니다.</span>
-          <button type="submit" class="button primary">첨부한 이력서로 계속 ${icon('arrow', 18)}</button>
+          <button type="submit" class="button primary workflow-next">첨부한 이력서로 계속 ${icon('arrow', 18)}</button>
         </div>
         </form>
       </section>

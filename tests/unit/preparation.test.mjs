@@ -124,8 +124,8 @@ test('unsaved target stays in its editor and changed target invalidates answer e
     answers: {},
   };
   const edits = { role_id: 'ai', focus: 'RAG', answers: { old: '이전 질문 답변' } };
-  assert.equal(draftForPage('job', saved, edits).career_target.role_id, 'ai');
-  assert.equal(draftForPage('questions', saved, edits).career_target.role_id, 'backend');
+  assert.equal(draftForPage('desired-role', saved, edits).career_target.role_id, 'ai');
+  assert.equal(draftForPage('result', saved, edits).career_target.role_id, 'backend');
   assert.equal(
     remainingEdits(edits, ['role_id', 'focus'], saved, {
       ...saved,

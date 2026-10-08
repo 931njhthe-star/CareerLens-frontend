@@ -3,17 +3,18 @@
 ## Current final-report loading eye
 
 The active flow mounts `mountAnalysisEye(host, snapshot, { surface: 'overlay', purpose: 'report' })`
-after the answers page is submitted. The existing page dims first; the outer eye and
-pupil outlines draw together. Fine golden needles grow from the open pupil edge
+when **모의지원 결과 확인** is selected on a posting. There is no supplemental-answer
+page. The posting dims first; the outer eye and
+pupil outlines draw together. Fine sapphire needles grow from the open pupil edge
 outward at independent deterministic speeds. There is no angular sweep or filled
-gold sector. The 12 subcriteria are randomly assigned to individual needles once
+colour sector. The 12 subcriteria are randomly assigned to individual needles once
 per analysis run. Each rotating callout gauge follows its assigned needle, and
 the assignment remains stable through API updates, resizing and SVG fallback.
 The gauges show visual growth, not per-criterion server progress or scores.
 
 - `src/analysis-criteria.ts`: the 12 subcriteria and per-run needle assignments.
 - `src/analysis-fibres.ts`: editable needle count, onset, growth and taper.
-- `src/analysis-renderer.ts`: GPU geometry/material, fine gold light and transparent pupil.
+- `src/analysis-renderer.ts`: GPU geometry/material, palette-driven light and a transparent pupil.
 - `src/analysis-component.ts`: accessible status, SVG fallback, callouts and cleanup.
 - `src/analysis-timing.ts`: 4-second minimum, error pause, smooth completion and fold.
 - `src/analysis-styles.ts`: responsive callout appearance and spacing.
@@ -31,7 +32,7 @@ The report mounts a tetrahedral score graphic through
 Its four axes are 이력서 완성도, 직무 적합도, 지원 자격 충족도 and 실무 경쟁력.
 `src/features/analysis/demo-score-data.js` supplies random demonstration values,
 labelled **시연용 점수 · 실제 평가와 무관**, which remain stable for the same report
-object. The gold-to-red score change is also a demonstration. These values are
+object. The blue-to-sky-blue score change is also a demonstration. These values are
 unrelated to the résumé, the legacy server scores or actual improvement predictions.
 
 The renderer and geometry sources are `tools/matching-eye/src/score-pyramid.ts`

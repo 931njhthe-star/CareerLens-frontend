@@ -7,52 +7,122 @@ import {
   INTRODUCTION_DURATION_MS,
 } from '../../src/features/introduction/intro.js';
 
-test('global navigation has four stable destinations and one matching current page', () => {
+const navigationLinks = (markup) => [
+  ...markup.matchAll(/<a href="#\/([^"]+)"([^>]*)>([^<]+)<\/a>/g),
+];
+
+test('global navigation has four fixed destinations independent of inner workflow steps', () => {
   for (const [page, current] of [
     ['intro', 'intro'],
     ['resume', 'resume'],
-    ['job', 'job'],
-    ['opportunities', 'job'],
-    ['questions', 'practice'],
+    ['desired-role', null],
+    ['job', null],
+    ['jobs', 'jobs'],
+    ['opportunities', 'jobs'],
+    ['practice', 'practice'],
+    ['preparing', null],
+    ['questions', null],
     ['result', 'practice'],
+    ['email', null],
+    ['register', null],
   ]) {
     const markup = renderPrimaryNav(page);
-    const links = [...markup.matchAll(/<a href="#\/(\w+)"([^>]*)>([^<]+)<\/a>/g)];
+    const links = navigationLinks(markup);
     assert.deepEqual(
       links.map((link) => [link[1], link[3]]),
       [
         ['intro', '소개'],
         ['resume', '이력서'],
-        ['job', '채용공고'],
+        ['jobs', '채용공고'],
         ['practice', '모의 지원'],
       ],
     );
     assert.deepEqual(
       links.filter((link) => link[2].includes('aria-current="page"')).map((link) => link[1]),
-      [current],
+      current ? [current] : [],
     );
-    assert.ok(!markup.includes('희망 직무'));
   }
 });
 
-test('workflow indicator stays outside the header and maps posting browsing to step two', () => {
+test('desired-role progress remains local to the workflow without changing the main menu', () => {
+  const draft = { resume_text: '경력', career_target: { role_id: 'developer' } };
+  const markup = shell('', { page: 'desired-role', draft });
+  const header = markup.slice(0, markup.indexOf('</header>'));
+  assert.doesNotMatch(header, /희망 직무|aria-current=/);
+  assert.match(
+    markup,
+    /aria-current="step"[^>]*>\s*<span class="step-number">2<\/span>[\s\S]*?<span>희망 직무<\/span>/,
+  );
+});
+
+test('posting navigation opens the chosen role and falls back to the catalog without a role', () => {
+  const draft = { career_target: { role_id: 'custom', label: '데이터 & AI "분석"' } };
+  for (const markup of [
+    renderPrimaryNav('opportunities', draft),
+    shell('', { page: 'opportunities', draft }),
+  ]) {
+    const postings = navigationLinks(markup).find((link) => link[3] === '채용공고');
+    assert.match(postings[1], /^opportunities\?role_id=custom&amp;label=/);
+    assert.match(postings[2], /aria-current="page"/);
+    const query = new URLSearchParams(postings[1].replaceAll('&amp;', '&').split('?')[1]);
+    assert.equal(query.get('role_id'), 'custom');
+    assert.equal(query.get('label'), draft.career_target.label);
+  }
+  for (const draft of [undefined, {}, { career_target: { label: '미선택' } }]) {
+    const postings = navigationLinks(renderPrimaryNav('email', draft)).find(
+      (link) => link[3] === '채용공고',
+    );
+    assert.equal(postings[1], 'jobs');
+    assert.ok(!postings[2].includes('aria-current'));
+  }
+});
+
+test('workflow indicator has four steps outside the header and distinguishes role from postings', () => {
   const draft = { resume_text: '경력', career_target: { role_id: 'developer' } };
   for (const [page, activeLabel] of [
     ['resume', '이력서'],
-    ['job', '채용 공고'],
-    ['opportunities', '채용 공고'],
-    ['preparing', '채용 공고'],
-    ['questions', '모의지원'],
-    ['result', '모의지원'],
+    ['desired-role', '희망 직무'],
+    ['job', '희망 직무'],
+    ['opportunities', '채용공고'],
+    ['practice', '모의 지원'],
+    ['preparing', '모의 지원'],
+    ['questions', '모의 지원'],
+    ['result', '모의 지원'],
   ]) {
     const markup = shell('', { page, draft });
     const headerEnd = markup.indexOf('</header>');
     const indicatorStart = markup.indexOf('aria-label="모의지원 진행 단계"');
     assert.ok(indicatorStart > headerEnd);
+    assert.equal([...markup.matchAll(/class="step(?: |")/g)].length, 4);
     const currentStep = markup.match(
       /<(?:a|span)\s+[^>]*class="step active[^>]*>[\s\S]*?<span>([^<]+)<\/span>/,
     );
     assert.equal(currentStep?.[1], activeLabel, page);
+  }
+});
+
+test('workflow links require the relevant data, including a posting before practice', () => {
+  const workflowLinks = (draft) => {
+    const markup = shell('', { page: 'desired-role', draft });
+    const workflow = markup.match(/<nav\s+class="steps"[\s\S]*?<\/nav>/)[0];
+    return [...workflow.matchAll(/href="#\/([^"]+)"/g)].map((link) => link[1]);
+  };
+  assert.deepEqual(workflowLinks({}), ['resume']);
+  assert.deepEqual(workflowLinks({ resume_text: '경력' }), ['resume', 'desired-role']);
+  assert.deepEqual(workflowLinks({ guest: true }), ['resume', 'desired-role']);
+  const draft = { resume_text: '경력', career_target: { role_id: 'developer' } };
+  const beforeSelection = workflowLinks(draft);
+  assert.equal(beforeSelection.length, 3);
+  assert.match(beforeSelection[2], /^opportunities\?role_id=developer&amp;label=&amp;page=1$/);
+  assert.ok(!beforeSelection.includes('practice'));
+  for (const ready of [
+    { selected_posting_id: 'posting-1' },
+    { job_text: '실제 선택한 공고 본문' },
+    { preparation: { complete: true } },
+    { report: { id: 'report-1' } },
+    { report_locked: true },
+  ]) {
+    assert.ok(workflowLinks({ ...draft, ...ready }).includes('practice'));
   }
 });
 

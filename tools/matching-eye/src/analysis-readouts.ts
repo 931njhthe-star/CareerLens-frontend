@@ -63,7 +63,7 @@ export function analysisReadouts(
       id: 'report-preparation',
       stageId: 'report',
       label: '보고서 구성',
-      detail: '분석 내용과 보완할 질문을 정리해요.',
+      detail: '분석 내용과 보완할 부분을 정리해요.',
     },
     {
       id: 'role-context',
@@ -74,8 +74,8 @@ export function analysisReadouts(
     {
       id: 'questions',
       stageId: 'report',
-      label: '모의지원 질문',
-      detail: '내 경험을 더 자세히 설명할 질문을 준비해요.',
+      label: '보완 방향',
+      detail: '이력서에서 더 설명하면 좋을 경험을 정리해요.',
     },
   ];
 }

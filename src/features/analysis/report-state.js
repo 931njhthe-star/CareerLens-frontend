@@ -1,16 +1,13 @@
-// Final-report completion comes from /analysis, independently of the earlier questions.
-export function reportLoadingSnapshot(draft, answers, complete = false) {
+// Only the final analysis response completes the loading presentation.
+export function reportLoadingSnapshot(draft, complete = false) {
   const status = complete ? 'complete' : 'running';
-  const count = Object.values(answers).filter(
-    (value) => typeof value === 'string' && value.trim(),
-  ).length;
   return {
     stages: [
       {
         id: 'resume',
-        label: '이력서와 답변 확인',
+        label: '이력서 확인',
         status,
-        detail: '입력한 경험과 보완 답변을 함께 살펴봅니다.',
+        detail: '이력서에 담긴 경험과 성과를 살펴봅니다.',
       },
       {
         id: 'role',
@@ -29,14 +26,7 @@ export function reportLoadingSnapshot(draft, answers, complete = false) {
         detail: '경험에 대한 요약과 보완할 부분을 정리합니다.',
       },
     ],
-    insights: [
-      {
-        id: 'submitted-answers',
-        stageId: 'resume',
-        label: '보완 답변',
-        detail: `작성한 답변 ${count}개를 이력서와 함께 분석합니다.`,
-      },
-    ],
+    insights: [],
     complete,
   };
 }

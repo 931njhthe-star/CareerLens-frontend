@@ -12,6 +12,33 @@ const saved = {
   report: { score: 70, verdict: '회사A 분석', summary: '회사A 공고의 분석 결과' },
 };
 
+test('desired-role editor restores its own changes without mixing resume or posting edits', () => {
+  const draft = {
+    ...saved,
+    career_target: { role_id: 'custom', label: '저장한 직무', focus: '저장한 관심 사항' },
+  };
+  const edits = {
+    resume_text: '수정 중인 이력서',
+    company: '수정 중인 회사',
+    job_text: '수정 중인 공고',
+    role: '수정 중인 직무',
+    role_id: 'custom',
+    focus: '수정 중인 관심 사항',
+  };
+  const editor = draftForPage('desired-role', draft, edits);
+  assert.equal(editor.resume_text, saved.resume_text);
+  assert.equal(editor.company, saved.company);
+  assert.equal(editor.job_text, saved.job_text);
+  assert.deepEqual(editor.career_target, {
+    role_id: 'custom',
+    label: '수정 중인 직무',
+    focus: '수정 중인 관심 사항',
+  });
+  assert.equal(draft.career_target.label, '저장한 직무');
+  assert.deepEqual(draftForPage('questions', draft, edits).career_target, draft.career_target);
+  assert.equal(draftForPage('result', draft, edits), draft);
+});
+
 test('editing company B without saving keeps report A labeled as company A', () => {
   const edits = { company: '회사B', role: '개발자B', job_text: '공고B' };
   const result = workspacePage('result', draftForPage('result', saved, edits), []);

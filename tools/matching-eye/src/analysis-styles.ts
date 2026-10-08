@@ -1,8 +1,8 @@
 export const analysisStyles = `
   .cl-analysis-eye {
-    --eye-gold: #e8ca89;
-    --eye-ink: #080908;
-    color: #f0eee3;
+    --eye-gold: var(--eye-highlight, #e8ca89);
+    --eye-ink: var(--eye-background, #080908);
+    color: var(--eye-text, #f0eee3);
     background: var(--eye-ink);
     font-family: inherit;
     overflow: hidden;
@@ -15,17 +15,17 @@ export const analysisStyles = `
   .cl-analysis-eye[data-surface="overlay"] .cl-analysis-eye__summary {
     border-top: 0;
     justify-content: center;
-    color: #ecefe4;
+    color: var(--eye-text, #ecefe4);
   }
   .cl-analysis-eye[data-surface="overlay"] .cl-analysis-eye__panel {
-    background: #0b0e0be8;
+    background: var(--eye-panel, #0b0e0be8);
   }
   .cl-analysis-eye *, .cl-analysis-eye *::before, .cl-analysis-eye *::after {
     box-sizing: border-box;
   }
   .cl-analysis-eye ::selection {
-    background: #b59858;
-    color: #080908;
+    background: var(--eye-highlight, #b59858);
+    color: var(--eye-background, #080908);
   }
   .cl-analysis-eye__scene {
     position: relative;
@@ -50,7 +50,7 @@ export const analysisStyles = `
   }
   .cl-analysis-eye__leader-track {
     fill: none;
-    stroke: #af9967;
+    stroke: var(--eye-outline, #af9967);
     stroke-opacity: .72;
     stroke-width: .75;
     stroke-dasharray: 1;
@@ -58,7 +58,7 @@ export const analysisStyles = `
     vector-effect: non-scaling-stroke;
   }
   .cl-analysis-eye__anchor {
-    fill: #ead6a1;
+    fill: var(--eye-highlight, #ead6a1);
   }
   .cl-analysis-eye__panels {
     position: absolute;
@@ -70,9 +70,9 @@ export const analysisStyles = `
     width: clamp(180px, 21%, 228px);
     min-height: 110px;
     padding: 16px 17px 14px;
-    border: 1px solid #b9a27152;
+    border: 1px solid var(--eye-panel-border, #b9a27152);
     border-radius: 8px;
-    background: #0d100df0;
+    background: var(--eye-panel, #0d100df0);
     opacity: 0;
     transform-origin: center;
     will-change: opacity, transform, filter;
@@ -122,14 +122,14 @@ export const analysisStyles = `
   }
   .cl-analysis-eye__state {
     flex-shrink: 0;
-    color: #e1c795;
+    color: var(--eye-highlight, #e1c795);
     font-size: 11px;
     line-height: 1.5;
   }
   .cl-analysis-eye__detail {
     min-height: 3em;
     margin: 0;
-    color: #d2d3c4;
+    color: var(--eye-text, #d2d3c4);
     font-size: 12px;
     line-height: 1.7;
     word-break: keep-all;
@@ -142,7 +142,7 @@ export const analysisStyles = `
   .cl-analysis-eye__measure {
     height: 1px;
     margin-top: 12px;
-    background: #393c30;
+    background: var(--eye-divider, #393c30);
     overflow: hidden;
   }
   .cl-analysis-eye__measure-fill {
@@ -159,10 +159,10 @@ export const analysisStyles = `
     gap: 20px;
     margin: 0;
     padding: 18px 28px 20px;
-    border-top: 1px solid #292d24;
+    border-top: 1px solid var(--eye-divider, #292d24);
     font-size: 13px;
     line-height: 1.5;
-    color: #d3d7c8;
+    color: var(--eye-text, #d3d7c8);
   }
   .cl-analysis-eye__summary strong {
     min-width: 4ch;
@@ -175,7 +175,7 @@ export const analysisStyles = `
   .cl-analysis-eye__note {
     margin: -8px 20px 0;
     padding-bottom: 14px;
-    color: #c2c9b8;
+    color: var(--eye-text, #c2c9b8);
     font-size: 11px;
     line-height: 1.6;
     text-align: center;

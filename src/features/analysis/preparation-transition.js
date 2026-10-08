@@ -41,12 +41,13 @@ export async function finishPreparationPresentation({
   onComplete,
   now = () => performance.now(),
   wait = waitForPresentationDelay,
+  fold = true,
 }) {
   signal.throwIfAborted();
   const minimum = wait(remainingPresentationTime(startedAt, now()), signal);
   const visual = (async () => {
     try {
-      if (eye?.finish) await withPresentationSignal(eye.finish(), signal);
+      if (eye?.finish) await withPresentationSignal(eye.finish({ fold }), signal);
     } catch (error) {
       if (signal.aborted) throw error;
       // A graphics failure does not invalidate already successful API analysis.

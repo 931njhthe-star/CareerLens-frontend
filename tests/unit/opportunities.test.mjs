@@ -71,9 +71,9 @@ test('master-detail content escapes DB fields and guests may analyze before resu
     assert.ok(!html.includes(attack));
     assert.ok(html.includes('&lt;img'));
   }
-  assert.ok(opportunityDetail(posting, null).includes('이 공고로 모의지원'));
+  assert.ok(opportunityDetail(posting, null).includes('모의지원 결과 확인'));
   assert.ok(opportunityDetail(posting, null).includes('로그인·회원가입'));
-  assert.ok(opportunityDetail(posting, { id: 'test' }).includes('이 공고로 모의지원'));
+  assert.ok(opportunityDetail(posting, { id: 'test' }).includes('모의지원 결과 확인'));
   assert.ok(opportunitiesPage().includes('opportunity-list'));
   assert.ok(opportunitiesPage().includes('opportunity-detail'));
 });

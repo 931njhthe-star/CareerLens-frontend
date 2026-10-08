@@ -99,7 +99,7 @@ export function jobEditor(draft) {
         </a>
         <button
           id="prepare-submit"
-          class="button primary"
+          class="button primary workflow-next"
           type="submit"
           disabled>
           관련 채용공고 보기 ${icon('arrow', 18)}

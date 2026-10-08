@@ -24,6 +24,9 @@ test('existing reports no longer mount the eye or display obsolete job connectio
   assert.ok(!markup.includes('60개 공고 중 27개'));
   assert.ok(!markup.includes('60점 이상'));
   assert.equal((markup.match(/data-status-radar(?:\s|>)/g) || []).length, 1);
+  assert.ok(markup.includes('data-preview-improvement'));
+  assert.doesNotMatch(markup, /evaluation-preview-scores|improvement-preview__score/);
+  assert.doesNotMatch(markup, /이력서 보완하기|href="#\/resume"/);
 });
 
 test('retained matching metadata never enters the new report surface', () => {
@@ -66,7 +69,7 @@ test('desired-role report uses role context and keeps actual status criteria', (
     },
   });
   assert.equal((markup.match(/data-status-radar(?:\s|>)/g) || []).length, 1);
-  assert.ok(markup.indexOf('report-hero-copy') < markup.indexOf('data-status-radar'));
+  assert.ok(markup.indexOf('data-status-radar') < markup.indexOf('report-hero-copy'));
   assert.ok(markup.includes('시연용 점수 · 실제 평가와 무관'));
   assert.ok(!markup.includes('일반 요소'));
   assert.ok(markup.includes('4개 평가축 시연'));
@@ -78,24 +81,67 @@ test('desired-role report uses role context and keeps actual status criteria', (
   assert.ok(!markup.includes('data-matching-eye'));
 });
 
-test('question preparation has text progress and recovery without the report eye', () => {
+test('studio report preserves account content and section navigation inside one report frame', () => {
+  const markup = analysisReport({
+    company: '실제 선택한 기업',
+    role: '선택한 데이터 직무',
+    report: {
+      summary: '서버에서 받은 요약입니다.',
+      matches: [
+        {
+          status: 'missing',
+          requirement: '데이터 처리 경험',
+          evidence_items: [{ excerpt: '입력 이력서의 근거', source_label: '프로젝트 원문' }],
+        },
+      ],
+      strengths: ['서버 강점'],
+      gaps: ['서버 부족 근거'],
+      priorities: [{ title: '서버 보완 제목', detail: '서버 보완 설명' }],
+      questions: ['서버 면접 질문'],
+    },
+  });
+  assert.equal((markup.match(/\bdata-report-frame\b/g) || []).length, 1);
+  assert.ok(markup.includes('result-layout--studio'));
+  assert.ok(markup.includes('report-section-nav'));
+  assert.doesNotMatch(markup, /report-sidebar|김하늘|라이트웨이브|금색|붉은색/);
+  for (const section of ['overview', 'readiness', 'evidence', 'priorities', 'interview']) {
+    assert.ok(markup.includes(`data-section="${section}"`));
+    assert.ok(markup.includes(`id="${section}"`));
+  }
+  for (const content of [
+    '실제 선택한 기업',
+    '선택한 데이터 직무',
+    '서버에서 받은 요약입니다.',
+    '데이터 처리 경험',
+    '입력 이력서의 근거',
+    '프로젝트 원문',
+    '근거 부족',
+    '서버 강점',
+    '서버 부족 근거',
+    '서버 보완 제목',
+    '서버 보완 설명',
+    '서버 면접 질문',
+  ])
+    assert.ok(markup.includes(content), `Missing report content: ${content}`);
+  assert.doesNotMatch(markup, /이력서 보완하기|download=|window\.print|evaluation-preview-scores/);
+});
+
+test('workspace views cannot mount the removed question form or preparation screen', () => {
   const attack = '<img src=x onerror="alert(1)">';
   const draft = {
     role: attack,
     resume_text: '이력서',
     analysis_mode: 'desired_role',
     career_target: { role_id: 'custom', label: attack },
+    report: { score: 70, summary: '결과', verdict: '완료' },
   };
-  const markup = workspacePage('preparing', draft, []);
-  assert.ok(markup.includes('data-preparation-status'));
-  assert.ok(!markup.includes('data-analysis-eye'));
-  assert.ok(!markup.includes('data-report-eye'));
-  assert.ok(!markup.includes(attack));
-  assert.match(markup, /id="preparation-message"\s+role="status"/);
-  assert.match(markup, /id="preparation-retry"[^>]*hidden/);
-  assert.ok(!markup.includes('preparation-continue'));
-  for (const page of ['resume', 'job', 'questions']) {
-    assert.ok(!workspacePage(page, draft, []).includes('data-analysis-eye'));
+  for (const page of ['resume', 'desired-role', 'questions', 'preparing', 'result']) {
+    const markup = workspacePage(page, draft, []);
+    assert.doesNotMatch(
+      markup,
+      /id="analysis-form"|data-preparation-status|data-analysis-eye|data-report-eye/,
+    );
+    assert.ok(!markup.includes(attack));
   }
 });
 

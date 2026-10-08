@@ -82,13 +82,13 @@ export function bindOpportunities({ route, user, navigate, onSelect, onError }) 
       else {
         detail.setAttribute('aria-busy', 'false');
         detail.innerHTML =
-          '<div class="opportunities__empty"><h2>이 직무의 공고가 아직 없어요.</h2><p>다른 희망 직무를 선택해 주세요. 등록된 공고가 추가되면 이 목록에 표시됩니다.</p><a class="back-link" href="#/job">희망 직무 수정</a></div>';
+          '<div class="opportunities__empty"><h2>이 직무의 공고가 아직 없어요.</h2><p>다른 희망 직무를 선택해 주세요. 등록된 공고가 추가되면 이 목록에 표시됩니다.</p><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>';
       }
     } catch (error) {
       if (signal.aborted) return;
       count.textContent = '목록을 불러오지 못했어요.';
       detail.setAttribute('aria-busy', 'false');
-      detail.innerHTML = `<div class="opportunities__empty" role="alert"><p>${e(error.message)}</p><button id="retry-opportunities" class="button secondary">다시 불러오기</button><a class="back-link" href="#/job">희망 직무 수정</a></div>`;
+      detail.innerHTML = `<div class="opportunities__empty" role="alert"><p>${e(error.message)}</p><button id="retry-opportunities" class="button secondary">다시 불러오기</button><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>`;
       document.getElementById('retry-opportunities').addEventListener('click', load, { signal });
     } finally {
       if (!signal.aborted) list.setAttribute('aria-busy', 'false');

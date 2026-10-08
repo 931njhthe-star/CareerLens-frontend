@@ -66,11 +66,26 @@ test('cancelled guest analysis does not open completed result', async () => {
 
 test('practice navigation respects resume, posting and locked report prerequisites', () => {
   assert.equal(practiceDestination({}), 'resume');
-  assert.equal(practiceDestination({ resume_attached: true }), 'job');
-  assert.equal(
-    practiceDestination({ resume_attached: true, selected_posting_id: 'a' }),
-    'questions',
-  );
+  assert.equal(practiceDestination({ resume_attached: true }), 'desired-role');
+  assert.equal(practiceDestination({ resume_text: '저장한 이력서' }), 'desired-role');
+  assert.equal(practiceDestination({ resume_attached: true, selected_posting_id: 'a' }), 'jobs/a');
   assert.equal(practiceDestination({ report_locked: true }), 'result');
   assert.equal(practiceDestination({ report: { score: 0 } }), 'result');
+});
+
+test('practice returns to the saved role listing or selected posting until its report is ready', () => {
+  const draft = {
+    resume_attached: true,
+    career_target: { role_id: 'backend', label: '백엔드 개발자' },
+  };
+  const destination = practiceDestination(draft);
+  assert.equal(destination.split('?')[0], 'opportunities');
+  const query = new URLSearchParams(destination.split('?')[1]);
+  assert.equal(query.get('role_id'), 'backend');
+  assert.equal(query.get('label'), '백엔드 개발자');
+  assert.equal(query.get('page'), '1');
+  const selected = practiceDestination({ ...draft, selected_posting_id: 'selected/a' });
+  assert.equal(selected, 'jobs/selected%2Fa');
+  assert.equal(practiceDestination({ selected_posting_id: 'selected/a' }), 'jobs/selected%2Fa');
+  assert.equal(practiceDestination({ ...draft, report_locked: true }), 'result');
 });

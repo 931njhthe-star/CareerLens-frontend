@@ -4,10 +4,12 @@ import {
   withPresentationSignal,
 } from './preparation-transition.js';
 import { reportLoadingSnapshot } from './report-state.js';
+import { analysisEyePalette, reportTransitionPalette } from '../../shared/design/selected-theme.js';
+import { playReportTransition } from '../../shared/motion/report-transition.js';
 
-// A native modal keeps the existing answers visible underneath, but prevents edits
-// while the submitted snapshot is being analyzed. Escape returns to those answers.
-export function createReportLoading({ draft, answers }) {
+// A native modal prevents changes while the selected posting is analyzed.
+// Explicit cancellation can return to that posting from any starting page.
+export function createReportLoading({ draft, onCancel }) {
   const abort = new AbortController();
   const { signal } = abort;
   const dialog = document.createElement('dialog');
@@ -20,7 +22,7 @@ export function createReportLoading({ draft, answers }) {
       <div class="report-loading-heading">
         <h2 id="report-loading-title">경험을 하나의 보고서로 정리하고 있어요.</h2>
         <p id="report-loading-description">
-          ${draft.analysis_mode === 'job_posting' ? '이력서와 선택한 채용공고, 추가로 적어주신 답변을 함께 살펴봅니다.' : '이력서와 희망 직무, 추가로 적어주신 답변을 함께 살펴봅니다.'}
+          ${draft.analysis_mode === 'job_posting' ? '이력서와 선택한 채용공고를 함께 살펴봅니다.' : '이력서와 희망 직무를 함께 살펴봅니다.'}
         </p>
       </div>
       <div
@@ -35,7 +37,7 @@ export function createReportLoading({ draft, answers }) {
       <button
         type="button"
         class="report-loading-return">
-        입력으로 돌아가기
+        채용공고로 돌아가기
       </button>
     </div>
   `;
@@ -47,12 +49,13 @@ export function createReportLoading({ draft, answers }) {
   let eye;
   let disposed = false;
   let startedAt;
+  let analysisComplete = false;
   document.body.append(dialog);
   document.body.style.overflow = 'hidden';
   dialog.showModal();
   dialog.focus();
 
-  function dispose() {
+  function dispose({ restoreFocus = true } = {}) {
     if (disposed) return;
     disposed = true;
     abort.abort();
@@ -63,15 +66,24 @@ export function createReportLoading({ draft, answers }) {
     const restore =
       focused?.isConnected && !focused.disabled
         ? focused
-        : document.querySelector('#analysis-form textarea');
-    restore?.focus({ preventScroll: true });
+        : document.querySelector(
+            '#opportunity-apply:not(:disabled), #select-posting:not(:disabled)',
+          ) ||
+          document.querySelector('#opportunity-detail') ||
+          document.querySelector('#main[tabindex]');
+    if (restoreFocus) restore?.focus({ preventScroll: true });
   }
-  back.addEventListener('click', dispose, { signal });
+  function cancel() {
+    if (disposed) return;
+    dispose();
+    onCancel?.();
+  }
+  back.addEventListener('click', cancel, { signal });
   dialog.addEventListener(
     'cancel',
     (event) => {
       event.preventDefault();
-      dispose();
+      cancel();
     },
     { signal },
   );
@@ -87,9 +99,10 @@ export function createReportLoading({ draft, answers }) {
       const visual = modulePromise.then((module) => {
         if (signal.aborted || !module) return;
         try {
-          eye = module.mountAnalysisEye(host, reportLoadingSnapshot(draft, answers), {
+          eye = module.mountAnalysisEye(host, reportLoadingSnapshot(draft), {
             surface: 'overlay',
             purpose: 'report',
+            palette: analysisEyePalette,
           });
         } catch {
           host.textContent = '보고서를 작성하고 있습니다.';
@@ -101,17 +114,84 @@ export function createReportLoading({ draft, answers }) {
       signal.throwIfAborted();
       await withPresentationSignal(visual, signal);
       signal.throwIfAborted();
-      eye?.update(reportLoadingSnapshot(draft, answers, true));
+      eye?.update(reportLoadingSnapshot(draft, true));
       host.setAttribute('aria-busy', 'false');
       if (!eye) host.textContent = '보고서가 완성되었습니다. 결과를 엽니다.';
-      await finishPreparationPresentation({ eye, startedAt, signal, onComplete() {} });
-      dialog.classList.add('is-leaving');
-      await waitForPresentationDelay(reduced ? 0 : 160, signal);
+      await finishPreparationPresentation({ eye, startedAt, signal, fold: false, onComplete() {} });
+      analysisComplete = true;
       return result;
     } catch (error) {
       dispose();
       throw error;
     }
   }
-  return { run, dispose, signal };
+
+  async function reveal({ frame, onReveal = () => {} } = {}) {
+    signal.throwIfAborted();
+    if (!analysisComplete) throw new Error('분석이 완료된 뒤 보고서를 열 수 있습니다.');
+    let revealed = false;
+    const revealContent = () => {
+      if (revealed || signal.aborted) return;
+      revealed = true;
+      onReveal();
+      dialog.classList.add('is-revealing');
+      eye?.dispose();
+      eye = undefined;
+    };
+    // The completed eye remains in the modal top layer while the real result is
+    // measured underneath. No screenshot, cloned report or synthetic report is used.
+    const source = host.querySelector('.cl-analysis-eye__scene') || host;
+    const bounds = dialog.getBoundingClientRect();
+    const eyeBounds = source.getBoundingClientRect();
+    const frameBounds = frame?.getBoundingClientRect();
+    const viewportWidth = dialog.clientWidth || bounds.width;
+    const viewportHeight = dialog.clientHeight || bounds.height;
+    // Follow the real scroll window without moving or shrinking its outline into
+    // a second, invented card. The canvas clips offscreen edges naturally.
+    const target = frameBounds && {
+      x: frameBounds.left - bounds.left,
+      y: frameBounds.top - bounds.top,
+      width: frameBounds.width,
+      height: frameBounds.height,
+    };
+    if (
+      !target ||
+      !Object.values(target).every(Number.isFinite) ||
+      target.width <= 0 ||
+      target.height <= 0 ||
+      target.x >= viewportWidth ||
+      target.y >= viewportHeight ||
+      target.x + target.width <= 0 ||
+      target.y + target.height <= 0
+    ) {
+      revealContent();
+      return;
+    }
+    dialog.classList.add('is-transferring');
+    try {
+      await playReportTransition({
+        host: dialog,
+        fromRect: {
+          x: eyeBounds.left - bounds.left,
+          y: eyeBounds.top - bounds.top,
+          width: eyeBounds.width,
+          height: eyeBounds.height,
+        },
+        toRect: target,
+        outline: 'document',
+        palette: reportTransitionPalette,
+        signal,
+        reducedMotion: reduced,
+        onReveal: revealContent,
+      });
+    } catch (error) {
+      signal.throwIfAborted();
+      // Presentation failure cannot discard an already valid report. Routing and
+      // authentication remain owned by the controller, including the guest gate.
+      revealContent();
+    }
+    signal.throwIfAborted();
+    revealContent();
+  }
+  return { run, reveal, dispose, signal };
 }

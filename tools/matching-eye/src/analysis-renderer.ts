@@ -7,6 +7,16 @@ import { analysisFoldScale, analysisViewport } from './analysis-projection.ts';
 
 export const EYE_BACKGROUND = '#080908';
 
+/** Optional presentation colors; omitted entries retain the production artwork. */
+export interface AnalysisEyePalette {
+  fiber?: string;
+  highlight?: string;
+  outline?: string;
+  background?: string;
+  panel?: string;
+  text?: string;
+}
+
 const fibreVertex = /* glsl */ `
   attribute float aAlong;
   attribute float aSide;
@@ -46,6 +56,9 @@ const fibreFragment = /* glsl */ `
   uniform float uError;
   uniform float uTipLight;
   uniform float uTime;
+  uniform vec3 uFiberColor;
+  uniform vec3 uSheenColor;
+  uniform vec3 uTipColor;
   varying float vLateral;
   varying float vWidth;
   varying float vAlong;
@@ -58,12 +71,12 @@ const fibreFragment = /* glsl */ `
     float edge = 1.0 - smoothstep(vWidth - feather, vWidth + feather, abs(vLateral));
     float tip = exp(-pow((1.0 - vAlong) * 23.0, 2.0)) * uTipLight;
     float root = mix(.42, .92, smoothstep(0.0, .30, vAlong));
-    vec3 champagne = vec3(.72, .49, .20) * vBrightness;
+    vec3 champagne = uFiberColor * vBrightness;
     // One restrained light direction gives every hairline a coherent metallic surface.
     float filament = 1.0 - smoothstep(0.0, max(vWidth * .65, .12), abs(vLateral));
     float sheen = pow(.5 + .5 * cos(vAngle * 2.0 - uTime * .16), 4.0);
-    champagne += vec3(.21, .20, .13) * filament * (.18 + sheen * .46);
-    champagne += vec3(.29, .27, .18) * tip * .75;
+    champagne += uSheenColor * filament * (.18 + sheen * .46);
+    champagne += uTipColor * tip * .75;
     champagne = mix(champagne, vec3(.46, .22, .14), uError);
     gl_FragColor = vec4(champagne, edge * root * uReveal);
     #include <colorspace_fragment>
@@ -111,7 +124,12 @@ function fibreGeometry(fibres: AnalysisFibre[]): THREE.BufferGeometry {
   return geometry;
 }
 
-function outline(transparentSurface: boolean): Stroke[] {
+function outline(transparentSurface: boolean, palette: AnalysisEyePalette): Stroke[] {
+  const color = (value: string | undefined, fallback: Stroke['color'], scale = 1): Stroke['color'] => {
+    if (!value) return fallback;
+    const tint = new THREE.Color(value).multiplyScalar(scale);
+    return [tint.r, tint.g, tint.b];
+  };
   const boundary = (upper: boolean) =>
     Array.from({ length: 141 }, (_, index): [number, number, number] => {
       const t = index / 140;
@@ -127,22 +145,22 @@ function outline(transparentSurface: boolean): Stroke[] {
       start: 0,
       duration: 0.72,
       width: transparentSurface ? 0.88 : 0.58,
-      color: transparentSurface ? [0.8, 0.83, 0.74] : [0.33, 0.36, 0.31],
+      color: color(palette.outline, transparentSurface ? [0.8, 0.83, 0.74] : [0.33, 0.36, 0.31]),
     },
     {
       points: boundary(false),
       start: 0,
       duration: 0.72,
       width: transparentSurface ? 0.88 : 0.58,
-      color: transparentSurface ? [0.8, 0.83, 0.74] : [0.33, 0.36, 0.31],
+      color: color(palette.outline, transparentSurface ? [0.8, 0.83, 0.74] : [0.33, 0.36, 0.31]),
     },
-    { points: arc(164), start: 0, duration: 0.72, width: 0.38, color: [0.23, 0.25, 0.2] },
+    { points: arc(164), start: 0, duration: 0.72, width: 0.38, color: color(palette.outline, [0.23, 0.25, 0.2], 0.4) },
     {
       points: arc(61),
       start: 0,
       duration: 0.72,
       width: transparentSurface ? 0.72 : 0.45,
-      color: transparentSurface ? [0.9, 0.76, 0.45] : [0.34, 0.29, 0.16],
+      color: color(palette.highlight, transparentSurface ? [0.9, 0.76, 0.45] : [0.34, 0.29, 0.16]),
     },
   ];
 }
@@ -164,6 +182,9 @@ export class AnalysisEyeRenderer {
         uTipLight: { value: 1 },
         uTime: { value: 0 },
         uPixelSize: { value: 1 },
+        uFiberColor: { value: new THREE.Vector3(.72, .49, .20) },
+        uSheenColor: { value: new THREE.Vector3(.21, .20, .13) },
+        uTipColor: { value: new THREE.Vector3(.29, .27, .18) },
       },
       vertexShader: fibreVertex,
       fragmentShader: fibreFragment,
@@ -178,7 +199,14 @@ export class AnalysisEyeRenderer {
     canvas: HTMLCanvasElement,
     transparentSurface = false,
     descriptors: AnalysisFibre[] = createAnalysisFibres(180),
+    palette: AnalysisEyePalette = {},
   ) {
+    if (palette.fiber)
+      this.fibres.material.uniforms.uFiberColor.value = new THREE.Color(palette.fiber);
+    if (palette.highlight) {
+      this.fibres.material.uniforms.uSheenColor.value = new THREE.Color(palette.highlight).multiplyScalar(.28);
+      this.fibres.material.uniforms.uTipColor.value = new THREE.Color(palette.highlight).multiplyScalar(.36);
+    }
     this.fibres.geometry.dispose();
     this.fibres.geometry = fibreGeometry(descriptors);
     this.renderer = new THREE.WebGLRenderer({
@@ -187,9 +215,9 @@ export class AnalysisEyeRenderer {
       alpha: transparentSurface,
       powerPreference: 'low-power',
     });
-    this.renderer.setClearColor(EYE_BACKGROUND, transparentSurface ? 0 : 1);
+    this.renderer.setClearColor(palette.background || EYE_BACKGROUND, transparentSurface ? 0 : 1);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.lines = createStrokes(outline(transparentSurface));
+    this.lines = createStrokes(outline(transparentSurface, palette));
     this.camera.position.z = 10;
     this.fibres.position.z = 1;
     this.fibres.frustumCulled = false;

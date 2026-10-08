@@ -33537,6 +33537,9 @@ var fibreFragment = `
   uniform float uError;
   uniform float uTipLight;
   uniform float uTime;
+  uniform vec3 uFiberColor;
+  uniform vec3 uSheenColor;
+  uniform vec3 uTipColor;
   varying float vLateral;
   varying float vWidth;
   varying float vAlong;
@@ -33549,12 +33552,12 @@ var fibreFragment = `
     float edge = 1.0 - smoothstep(vWidth - feather, vWidth + feather, abs(vLateral));
     float tip = exp(-pow((1.0 - vAlong) * 23.0, 2.0)) * uTipLight;
     float root = mix(.42, .92, smoothstep(0.0, .30, vAlong));
-    vec3 champagne = vec3(.72, .49, .20) * vBrightness;
+    vec3 champagne = uFiberColor * vBrightness;
     // One restrained light direction gives every hairline a coherent metallic surface.
     float filament = 1.0 - smoothstep(0.0, max(vWidth * .65, .12), abs(vLateral));
     float sheen = pow(.5 + .5 * cos(vAngle * 2.0 - uTime * .16), 4.0);
-    champagne += vec3(.21, .20, .13) * filament * (.18 + sheen * .46);
-    champagne += vec3(.29, .27, .18) * tip * .75;
+    champagne += uSheenColor * filament * (.18 + sheen * .46);
+    champagne += uTipColor * tip * .75;
     champagne = mix(champagne, vec3(.46, .22, .14), uError);
     gl_FragColor = vec4(champagne, edge * root * uReveal);
     #include <colorspace_fragment>
@@ -33616,7 +33619,16 @@ function fibreGeometry(fibres) {
 	geometry.setIndex(indices);
 	return geometry;
 }
-function outline(transparentSurface) {
+function outline(transparentSurface, palette) {
+	const color = (value, fallback, scale = 1) => {
+		if (!value) return fallback;
+		const tint = new Color(value).multiplyScalar(scale);
+		return [
+			tint.r,
+			tint.g,
+			tint.b
+		];
+	};
 	const boundary = (upper) => Array.from({ length: 141 }, (_, index) => {
 		const t = index / 140;
 		return [
@@ -33631,7 +33643,7 @@ function outline(transparentSurface) {
 			start: 0,
 			duration: .72,
 			width: transparentSurface ? .88 : .58,
-			color: transparentSurface ? [
+			color: color(palette.outline, transparentSurface ? [
 				.8,
 				.83,
 				.74
@@ -33639,14 +33651,14 @@ function outline(transparentSurface) {
 				.33,
 				.36,
 				.31
-			]
+			])
 		},
 		{
 			points: boundary(false),
 			start: 0,
 			duration: .72,
 			width: transparentSurface ? .88 : .58,
-			color: transparentSurface ? [
+			color: color(palette.outline, transparentSurface ? [
 				.8,
 				.83,
 				.74
@@ -33654,25 +33666,25 @@ function outline(transparentSurface) {
 				.33,
 				.36,
 				.31
-			]
+			])
 		},
 		{
 			points: arc(164),
 			start: 0,
 			duration: .72,
 			width: .38,
-			color: [
+			color: color(palette.outline, [
 				.23,
 				.25,
 				.2
-			]
+			], .4)
 		},
 		{
 			points: arc(61),
 			start: 0,
 			duration: .72,
 			width: transparentSurface ? .72 : .45,
-			color: transparentSurface ? [
+			color: color(palette.highlight, transparentSurface ? [
 				.9,
 				.76,
 				.45
@@ -33680,7 +33692,7 @@ function outline(transparentSurface) {
 				.34,
 				.29,
 				.16
-			]
+			])
 		}
 	];
 }
@@ -33698,7 +33710,10 @@ var AnalysisEyeRenderer = class {
 			uError: { value: 0 },
 			uTipLight: { value: 1 },
 			uTime: { value: 0 },
-			uPixelSize: { value: 1 }
+			uPixelSize: { value: 1 },
+			uFiberColor: { value: new Vector3(.72, .49, .2) },
+			uSheenColor: { value: new Vector3(.21, .2, .13) },
+			uTipColor: { value: new Vector3(.29, .27, .18) }
 		},
 		vertexShader: fibreVertex,
 		fragmentShader: fibreFragment,
@@ -33707,7 +33722,12 @@ var AnalysisEyeRenderer = class {
 		depthWrite: false,
 		side: 2
 	}));
-	constructor(canvas, transparentSurface = false, descriptors = createAnalysisFibres(180)) {
+	constructor(canvas, transparentSurface = false, descriptors = createAnalysisFibres(180), palette = {}) {
+		if (palette.fiber) this.fibres.material.uniforms.uFiberColor.value = new Color(palette.fiber);
+		if (palette.highlight) {
+			this.fibres.material.uniforms.uSheenColor.value = new Color(palette.highlight).multiplyScalar(.28);
+			this.fibres.material.uniforms.uTipColor.value = new Color(palette.highlight).multiplyScalar(.36);
+		}
 		this.fibres.geometry.dispose();
 		this.fibres.geometry = fibreGeometry(descriptors);
 		this.renderer = new WebGLRenderer({
@@ -33716,9 +33736,9 @@ var AnalysisEyeRenderer = class {
 			alpha: transparentSurface,
 			powerPreference: "low-power"
 		});
-		this.renderer.setClearColor(EYE_BACKGROUND, transparentSurface ? 0 : 1);
+		this.renderer.setClearColor(palette.background || "#080908", transparentSurface ? 0 : 1);
 		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.lines = createStrokes(outline(transparentSurface));
+		this.lines = createStrokes(outline(transparentSurface, palette));
 		this.camera.position.z = 10;
 		this.fibres.position.z = 1;
 		this.fibres.frustumCulled = false;
@@ -34014,7 +34034,7 @@ function analysisReadouts(value, snapshot, purpose = "preparation") {
 			id: "report-preparation",
 			stageId: "report",
 			label: "보고서 구성",
-			detail: "분석 내용과 보완할 질문을 정리해요."
+			detail: "분석 내용과 보완할 부분을 정리해요."
 		},
 		{
 			id: "role-context",
@@ -34025,8 +34045,8 @@ function analysisReadouts(value, snapshot, purpose = "preparation") {
 		{
 			id: "questions",
 			stageId: "report",
-			label: "모의지원 질문",
-			detail: "내 경험을 더 자세히 설명할 질문을 준비해요."
+			label: "보완 방향",
+			detail: "이력서에서 더 설명하면 좋을 경험을 정리해요."
 		}
 	];
 }
@@ -34034,9 +34054,9 @@ function analysisReadouts(value, snapshot, purpose = "preparation") {
 //#region src/analysis-styles.ts
 var analysisStyles = `
   .cl-analysis-eye {
-    --eye-gold: #e8ca89;
-    --eye-ink: #080908;
-    color: #f0eee3;
+    --eye-gold: var(--eye-highlight, #e8ca89);
+    --eye-ink: var(--eye-background, #080908);
+    color: var(--eye-text, #f0eee3);
     background: var(--eye-ink);
     font-family: inherit;
     overflow: hidden;
@@ -34049,17 +34069,17 @@ var analysisStyles = `
   .cl-analysis-eye[data-surface="overlay"] .cl-analysis-eye__summary {
     border-top: 0;
     justify-content: center;
-    color: #ecefe4;
+    color: var(--eye-text, #ecefe4);
   }
   .cl-analysis-eye[data-surface="overlay"] .cl-analysis-eye__panel {
-    background: #0b0e0be8;
+    background: var(--eye-panel, #0b0e0be8);
   }
   .cl-analysis-eye *, .cl-analysis-eye *::before, .cl-analysis-eye *::after {
     box-sizing: border-box;
   }
   .cl-analysis-eye ::selection {
-    background: #b59858;
-    color: #080908;
+    background: var(--eye-highlight, #b59858);
+    color: var(--eye-background, #080908);
   }
   .cl-analysis-eye__scene {
     position: relative;
@@ -34084,7 +34104,7 @@ var analysisStyles = `
   }
   .cl-analysis-eye__leader-track {
     fill: none;
-    stroke: #af9967;
+    stroke: var(--eye-outline, #af9967);
     stroke-opacity: .72;
     stroke-width: .75;
     stroke-dasharray: 1;
@@ -34092,7 +34112,7 @@ var analysisStyles = `
     vector-effect: non-scaling-stroke;
   }
   .cl-analysis-eye__anchor {
-    fill: #ead6a1;
+    fill: var(--eye-highlight, #ead6a1);
   }
   .cl-analysis-eye__panels {
     position: absolute;
@@ -34104,9 +34124,9 @@ var analysisStyles = `
     width: clamp(180px, 21%, 228px);
     min-height: 110px;
     padding: 16px 17px 14px;
-    border: 1px solid #b9a27152;
+    border: 1px solid var(--eye-panel-border, #b9a27152);
     border-radius: 8px;
-    background: #0d100df0;
+    background: var(--eye-panel, #0d100df0);
     opacity: 0;
     transform-origin: center;
     will-change: opacity, transform, filter;
@@ -34156,14 +34176,14 @@ var analysisStyles = `
   }
   .cl-analysis-eye__state {
     flex-shrink: 0;
-    color: #e1c795;
+    color: var(--eye-highlight, #e1c795);
     font-size: 11px;
     line-height: 1.5;
   }
   .cl-analysis-eye__detail {
     min-height: 3em;
     margin: 0;
-    color: #d2d3c4;
+    color: var(--eye-text, #d2d3c4);
     font-size: 12px;
     line-height: 1.7;
     word-break: keep-all;
@@ -34176,7 +34196,7 @@ var analysisStyles = `
   .cl-analysis-eye__measure {
     height: 1px;
     margin-top: 12px;
-    background: #393c30;
+    background: var(--eye-divider, #393c30);
     overflow: hidden;
   }
   .cl-analysis-eye__measure-fill {
@@ -34193,10 +34213,10 @@ var analysisStyles = `
     gap: 20px;
     margin: 0;
     padding: 18px 28px 20px;
-    border-top: 1px solid #292d24;
+    border-top: 1px solid var(--eye-divider, #292d24);
     font-size: 13px;
     line-height: 1.5;
-    color: #d3d7c8;
+    color: var(--eye-text, #d3d7c8);
   }
   .cl-analysis-eye__summary strong {
     min-width: 4ch;
@@ -34209,7 +34229,7 @@ var analysisStyles = `
   .cl-analysis-eye__note {
     margin: -8px 20px 0;
     padding-bottom: 14px;
-    color: #c2c9b8;
+    color: var(--eye-text, #c2c9b8);
     font-size: 11px;
     line-height: 1.6;
     text-align: center;
@@ -34381,7 +34401,7 @@ function makeFallback(transparentSurface, descriptors) {
 	const group = svgElement$1("g");
 	const outlines = ["M-352 0Q0-365 352 0", "M352 0Q0 365-352 0"].map((d) => svgElement$1("path", {
 		d,
-		stroke: transparentSurface ? "#d0d6bf" : "#a5ad98",
+		stroke: `var(--eye-outline, ${transparentSurface ? "#d0d6bf" : "#a5ad98"})`,
 		fill: "none",
 		"stroke-width": transparentSurface ? "1.6" : "1",
 		pathLength: "100"
@@ -34389,13 +34409,13 @@ function makeFallback(transparentSurface, descriptors) {
 	group.append(...outlines);
 	const fibres = descriptors.map((descriptor) => {
 		const path = svgElement$1("path", {
-			fill: "#d9b77c",
+			fill: "var(--eye-fiber, #d9b77c)",
 			"data-fibre-group": descriptor.group,
 			"data-fibre-id": String(descriptor.id)
 		});
 		const tip = svgElement$1("circle", {
 			r: ".65",
-			fill: "#fff0c7",
+			fill: "var(--eye-highlight, #fff0c7)",
 			opacity: "0"
 		});
 		group.append(path, tip);
@@ -34409,7 +34429,7 @@ function makeFallback(transparentSurface, descriptors) {
 		const pupil = transparentSurface && radius === 61;
 		const ring = svgElement$1("circle", {
 			r: String(radius),
-			stroke: pupil ? "#e5c273" : "#6c705e",
+			stroke: pupil ? "var(--eye-highlight, #e5c273)" : "var(--eye-outline, #6c705e)",
 			fill: "none",
 			"stroke-width": pupil ? "1.3" : ".65",
 			pathLength: "100"
@@ -34419,7 +34439,7 @@ function makeFallback(transparentSurface, descriptors) {
 	}
 	if (!transparentSurface) group.append(svgElement$1("circle", {
 		r: "60",
-		fill: EYE_BACKGROUND
+		fill: `var(--eye-background, ${EYE_BACKGROUND})`
 	}));
 	svg.append(group);
 	return {
@@ -34444,6 +34464,21 @@ function mountAnalysisEye(container, initial, options = {}) {
 	const abort = new AbortController();
 	const { signal } = abort;
 	const root = element$1("div", "cl-analysis-eye");
+	for (const key of [
+		"fiber",
+		"highlight",
+		"outline",
+		"background",
+		"panel",
+		"text"
+	]) {
+		const color = options.palette?.[key];
+		if (color) root.style.setProperty(`--eye-${key}`, color);
+	}
+	if (options.palette?.outline) {
+		root.style.setProperty("--eye-panel-border", "color-mix(in srgb, var(--eye-outline) 32%, transparent)");
+		root.style.setProperty("--eye-divider", "color-mix(in srgb, var(--eye-outline) 18%, transparent)");
+	}
 	root.dataset.surface = transparentSurface ? "overlay" : "card";
 	root.dataset.purpose = purpose;
 	const style = element$1("style");
@@ -34477,7 +34512,7 @@ function mountAnalysisEye(container, initial, options = {}) {
 	const percent = element$1("strong");
 	percent.setAttribute("aria-hidden", "true");
 	summary.append(summaryMessage, percent);
-	const note = element$1("p", "cl-analysis-eye__note", "금빛 선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.");
+	const note = element$1("p", "cl-analysis-eye__note", options.palette?.fiber ? "선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다." : "금빛 선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.");
 	visual.append(canvas);
 	scene.append(visual, leaders, panelList);
 	root.append(style, scene, summary, note, accessibleStages, progress);
@@ -34489,6 +34524,7 @@ function mountAnalysisEye(container, initial, options = {}) {
 	let frameRequest = 0;
 	let finishTimer = 0;
 	let finishRequested = false;
+	let foldOnFinish = true;
 	let finished = false;
 	let finishPromise = null;
 	let resolveFinish = null;
@@ -34570,7 +34606,8 @@ function mountAnalysisEye(container, initial, options = {}) {
 		});
 	}
 	function settle(now) {
-		if (!finishRequested || finished || !snapshot.complete || !timeline.finished(now)) return;
+		const ready = foldOnFinish ? timeline.finished(now) : timeline.readyAt !== null && now >= timeline.readyAt;
+		if (!finishRequested || finished || !snapshot.complete || !ready) return;
 		finished = true;
 		stopFrame();
 		clearTimeout(finishTimer);
@@ -34583,7 +34620,7 @@ function mountAnalysisEye(container, initial, options = {}) {
 	function draw(now = performance.now()) {
 		if (disposed) return;
 		const fill = timeline.progress(now);
-		const fold = finishRequested ? timeline.fold(now) : 0;
+		const fold = finishRequested && foldOnFinish ? timeline.fold(now) : 0;
 		const elapsed = Math.max(0, now - startedAt);
 		const presented = (groupFibreProgress(panelFibres, fill, "resume") + groupFibreProgress(panelFibres, fill, "role") + groupFibreProgress(panelFibres, fill, "report")) / 3;
 		const percentValue = Math.floor(presented * 100);
@@ -34621,7 +34658,7 @@ function mountAnalysisEye(container, initial, options = {}) {
 						1
 					];
 					path.setAttribute("d", `M${steps.map((step) => edge(step, 1)).join("L")}L${steps.slice().reverse().map((step) => edge(step, -1)).join("L")}Z`);
-					path.setAttribute("fill", snapshot.hasError ? "#ad7560" : "#d9b77c");
+					path.setAttribute("fill", snapshot.hasError ? "#ad7560" : "var(--eye-fiber, #d9b77c)");
 					path.setAttribute("opacity", String(segment.growth <= 1e-5 ? 0 : descriptor.brightness * .78 * (reducedMotion.matches ? 1 : Math.min(1, elapsed / 480))));
 					tip.setAttribute("cx", segment.tip[0].toFixed(2));
 					tip.setAttribute("cy", (-segment.tip[1]).toFixed(2));
@@ -34666,7 +34703,7 @@ function mountAnalysisEye(container, initial, options = {}) {
 				error: "확인 필요"
 			}[stage.status]}. ${stage.detail}`;
 		});
-		summaryMessage.textContent = snapshot.hasError ? "확인하지 못한 항목이 있어요. 다시 시도해 주세요." : snapshot.complete ? purpose === "report" ? "분석을 정리하고 보고서를 완성합니다." : "분석을 정리하고 모의지원을 준비합니다." : purpose === "report" ? "이력서와 답변을 분석하고 있어요." : "이력서와 희망 직무를 살펴보고 있어요.";
+		summaryMessage.textContent = snapshot.hasError ? "확인하지 못한 항목이 있어요. 다시 시도해 주세요." : snapshot.complete ? purpose === "report" ? "분석을 정리하고 보고서를 완성합니다." : "분석을 정리하고 모의지원을 준비합니다." : purpose === "report" ? "이력서와 채용공고를 분석하고 있어요." : "이력서와 희망 직무를 살펴보고 있어요.";
 		if (!snapshot.complete && finishPromise && !finished) {
 			clearTimeout(finishTimer);
 			finishRequested = false;
@@ -34677,16 +34714,17 @@ function mountAnalysisEye(container, initial, options = {}) {
 		}
 		resume();
 	}
-	function finish() {
+	function finish(options = {}) {
 		if (disposed) return Promise.reject(new DOMException("Analysis view disposed", "AbortError"));
 		if (!snapshot.complete) return Promise.reject(/* @__PURE__ */ new Error("All analysis stages must complete before finishing."));
 		if (finishPromise) return finishPromise;
+		foldOnFinish = options.fold !== false;
 		finishRequested = true;
 		finishPromise = new Promise((resolve, reject) => {
 			resolveFinish = resolve;
 			rejectFinish = reject;
 		});
-		const deadline = (timeline.readyAt ?? performance.now()) + 520;
+		const deadline = (timeline.readyAt ?? performance.now()) + (foldOnFinish ? 520 : 0);
 		const check = () => {
 			if (disposed) return;
 			draw();
@@ -34704,7 +34742,7 @@ function mountAnalysisEye(container, initial, options = {}) {
 		}
 	}, { signal });
 	try {
-		renderer = new AnalysisEyeRenderer(canvas, transparentSurface, panelFibres);
+		renderer = new AnalysisEyeRenderer(canvas, transparentSurface, panelFibres, options.palette);
 		container.dataset.renderer = "webgl";
 		const bounds = visual.getBoundingClientRect();
 		renderer.resize(Math.max(1, bounds.width), Math.max(1, bounds.height));
@@ -34824,6 +34862,28 @@ var PYRAMID_EDGES = [
 	3,
 	1
 ];
+/** A full yaw envelope keeps automatic rotation steady; only viewport/pitch changes refit it. */
+function pyramidFraming(width, height, pitch) {
+	const radius = 1.28 * Math.sqrt(8 / 9);
+	let minY = Infinity, maxY = -Infinity, extentX = 0;
+	const include = (x, y, z) => {
+		const ry = y * Math.cos(pitch) - z * Math.sin(pitch);
+		const perspective = 5.6 / (5.6 - (y * Math.sin(pitch) + z * Math.cos(pitch)));
+		extentX = Math.max(extentX, Math.abs(x * perspective));
+		minY = Math.min(minY, -ry * perspective);
+		maxY = Math.max(maxY, -ry * perspective);
+	};
+	include(0, 1.28, 0);
+	for (let index = 0; index < 96; index++) {
+		const angle = index / 96 * Math.PI * 2;
+		include(Math.sin(angle) * radius, -1.28 / 3, Math.cos(angle) * radius);
+	}
+	const padding = Math.min(24, Math.min(width, height) * .09);
+	return {
+		centerY: (minY + maxY) / 2,
+		scale: Math.min((width - padding * 2) / (extentX * 2.002), (height - padding * 2) / ((maxY - minY) * 1.001)) / 1.16
+	};
+}
 function pyramidPoints(scores) {
 	return PYRAMID_VERTICES.map((vertex, index) => {
 		const score = scores[index];
@@ -34845,6 +34905,7 @@ var glassVertex = `
 `;
 var glassFragment = `
   uniform vec3 uColor;
+  uniform vec3 uGlint;
   uniform float uOpacity;
   varying vec3 vNormal;
   varying vec3 vView;
@@ -34854,8 +34915,56 @@ var glassFragment = `
     float rim = pow(1.0 - abs(dot(normal, view)), 2.6);
     float light = abs(dot(normal, normalize(vec3(-0.7, 1.0, 1.3))));
     float glint = pow(abs(dot(reflect(-view, normal), normalize(vec3(-0.3, 0.9, 1.0)))), 28.0);
-    vec3 color = uColor * (0.54 + light * 0.44) + vec3(0.93, 0.87, 0.73) * glint * 0.22;
+    vec3 color = uColor * (0.54 + light * 0.44) + uGlint * glint * 0.22;
     gl_FragColor = vec4(color, uOpacity * (0.35 + rim * 0.65));
+    #include <colorspace_fragment>
+  }
+`;
+var shellVertex = `
+  attribute vec3 barycentric;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  varying vec3 vBarycentric;
+  void main() {
+    vec4 point = modelViewMatrix * vec4(position, 1.0);
+    vView = -point.xyz;
+    vNormal = normalize(normalMatrix * normal);
+    vBarycentric = barycentric;
+    gl_Position = projectionMatrix * point;
+  }
+`;
+var shellFragment = `
+  uniform vec3 uTint;
+  uniform vec3 uReflection;
+  uniform vec3 uEdge;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  varying vec3 vBarycentric;
+  void main() {
+    vec3 normal = normalize(vNormal);
+    vec3 view = normalize(vView);
+    vec3 reflected = reflect(-view, normal);
+    float facing = abs(dot(normal, view));
+    float fresnel = 0.04 + 0.96 * pow(1.0 - facing, 4.0);
+
+    // Two broad studio reflections travel across the facets as the view turns.
+    float key = smoothstep(0.64, 0.99,
+      dot(reflected, normalize(vec3(-0.65, 0.8, 1.0))));
+    float strip = 1.0 - smoothstep(0.015, 0.19,
+      abs(dot(reflected, normalize(vec3(1.0, 0.22, 0.12))) - 0.24));
+    strip *= smoothstep(-0.55, 0.6, reflected.y);
+    float facet = 0.5 + 0.5 * dot(normal, normalize(vec3(-0.7, 0.8, 0.5)));
+
+    // A narrow bevel-like reflection gives the glass thickness without a heavy frame.
+    float edgeDistance = min(vBarycentric.x, min(vBarycentric.y, vBarycentric.z));
+    float edge = 1.0 - smoothstep(0.0, 0.025, edgeDistance);
+    float catchlight = edge * (0.3 + key * 0.45 + fresnel * 0.25);
+    vec3 color = uTint * (0.27 + facet * 0.12)
+      + uReflection * (key * 0.35 + strip * 0.18)
+      + uEdge * (catchlight * 0.65 + fresnel * 0.18);
+    float alpha = 0.07 + fresnel * 0.16 + key * 0.13
+      + strip * 0.09 + catchlight * 0.23;
+    gl_FragColor = vec4(color, min(alpha, 0.38));
     #include <colorspace_fragment>
   }
 `;
@@ -34871,6 +34980,7 @@ function glass(color, opacity) {
 		fragmentShader: glassFragment,
 		uniforms: {
 			uColor: { value: new Color(color) },
+			uGlint: { value: new Vector3(.93, .87, .73) },
 			uOpacity: { value: opacity }
 		},
 		transparent: true,
@@ -34878,17 +34988,38 @@ function glass(color, opacity) {
 		depthWrite: false
 	});
 }
+function glassShell(side) {
+	const shell = geometry(PYRAMID_VERTICES, PYRAMID_FACES);
+	shell.setAttribute("barycentric", new Float32BufferAttribute(PYRAMID_FACES.flatMap((_, index) => [
+		Number(index % 3 === 0),
+		Number(index % 3 === 1),
+		Number(index % 3 === 2)
+	]), 3));
+	return new Mesh(shell, new ShaderMaterial({
+		vertexShader: shellVertex,
+		fragmentShader: shellFragment,
+		uniforms: {
+			uTint: { value: new Color("#cfdfd7") },
+			uReflection: { value: new Vector3(.88, .95, 1) },
+			uEdge: { value: new Vector3(.92, 1, .95) }
+		},
+		transparent: true,
+		side,
+		depthWrite: false
+	}));
+}
 /** Four score vertices inside a stable, optically quiet glass reference volume. */
 var ScorePyramidRenderer = class {
 	renderer;
 	scene = new Scene();
 	camera = new PerspectiveCamera(36, 1, .1, 30);
 	assembly = new Group();
-	surface = new Mesh(geometry(PYRAMID_VERTICES, PYRAMID_FACES), glass("#c2cbbf", .12));
+	surface = glassShell(1);
+	frontSurface = glassShell(0);
 	frame = new LineSegments(geometry(PYRAMID_VERTICES, PYRAMID_EDGES), new LineBasicMaterial({
-		color: "#c5cbbc",
+		color: "#dbe8df",
 		transparent: true,
-		opacity: .55
+		opacity: .42
 	}));
 	value = new Mesh(geometry(pyramidPoints([
 		0,
@@ -34918,7 +35049,23 @@ var ScorePyramidRenderer = class {
 	rose = new Color("#e77773");
 	width = 1;
 	height = 1;
-	constructor(canvas) {
+	framing;
+	framingPitch = NaN;
+	constructor(canvas, palette = {}) {
+		if (palette.base) this.gold.set(palette.base);
+		if (palette.projected) this.rose.set(palette.projected);
+		for (const surface of [this.surface, this.frontSurface]) {
+			if (palette.glass) {
+				surface.material.uniforms.uTint.value = new Color(palette.glass);
+				surface.material.uniforms.uReflection.value = new Color(palette.glass);
+			}
+			if (palette.edge) surface.material.uniforms.uEdge.value = new Color(palette.edge);
+		}
+		if (palette.edge) {
+			this.frame.material.color.set(palette.edge);
+			this.guides.material.color.set(palette.edge);
+			this.value.material.uniforms.uGlint.value = new Color(palette.edge);
+		}
 		this.renderer = new WebGLRenderer({
 			canvas,
 			alpha: true,
@@ -34926,17 +35073,19 @@ var ScorePyramidRenderer = class {
 			powerPreference: "low-power"
 		});
 		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.renderer.setClearColor("#0b0d0b", 0);
-		this.camera.position.set(0, .3, 5.6);
-		this.camera.lookAt(0, .13, 0);
+		this.renderer.setClearColor(palette.background || "#0b0d0b", palette.background ? 1 : 0);
+		this.camera.position.set(0, 0, 5.6);
+		this.camera.lookAt(0, 0, 0);
+		this.camera.updateMatrixWorld();
 		this.guides.computeLineDistances();
 		this.surface.renderOrder = 0;
 		this.value.renderOrder = 1;
-		this.frame.renderOrder = 2;
-		this.edges.renderOrder = 3;
-		this.assembly.add(this.surface, this.guides, this.value, this.frame, this.edges);
+		this.frontSurface.renderOrder = 2;
+		this.frame.renderOrder = 3;
+		this.edges.renderOrder = 4;
+		this.assembly.add(this.surface, this.guides, this.value, this.frontSurface, this.frame, this.edges);
 		for (let index = 0; index < 4; index += 1) {
-			const marker = new Mesh(new SphereGeometry(.022, 10, 8), new MeshBasicMaterial({ color: "#fff0ca" }));
+			const marker = new Mesh(new SphereGeometry(.022, 10, 8), new MeshBasicMaterial({ color: palette.edge || "#fff0ca" }));
 			this.markers.push(marker);
 			this.assembly.add(marker);
 		}
@@ -34949,6 +35098,7 @@ var ScorePyramidRenderer = class {
 		this.renderer.setSize(this.width, this.height, false);
 		this.camera.aspect = this.width / this.height;
 		this.camera.updateProjectionMatrix();
+		this.framing = void 0;
 	}
 	render(scores, colorMix, yaw, pitch, zoom) {
 		const points = pyramidPoints(scores);
@@ -34963,9 +35113,16 @@ var ScorePyramidRenderer = class {
 		this.edges.material.color.copy(this.gold).lerp(this.rose, colorMix).multiplyScalar(1.12);
 		this.markers.forEach((marker, index) => marker.position.set(...points[index]));
 		this.assembly.rotation.set(pitch, yaw, 0);
-		this.camera.zoom = zoom;
-		this.camera.updateProjectionMatrix();
 		this.assembly.updateMatrixWorld(true);
+		if (!this.framing || pitch !== this.framingPitch) {
+			this.framing = pyramidFraming(this.width, this.height, pitch);
+			this.framingPitch = pitch;
+		}
+		const scale = this.framing.scale * Math.max(.85, Math.min(1.16, zoom));
+		this.camera.zoom = scale * 2 * 5.6 * Math.tan(Math.PI / 10) / this.height;
+		this.camera.updateProjectionMatrix();
+		this.camera.projectionMatrix.elements[9] -= this.framing.centerY * scale * 2 / this.height;
+		this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
 		this.renderer.render(this.scene, this.camera);
 		return PYRAMID_VERTICES.map((vertex) => {
 			const point = new Vector3(...vertex).applyMatrix4(this.assembly.matrixWorld).project(this.camera);

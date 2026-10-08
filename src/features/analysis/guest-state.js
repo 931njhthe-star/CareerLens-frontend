@@ -1,3 +1,5 @@
+import { opportunityPath } from '../job-postings/opportunity-state.js';
+
 // Guest responses carry completion metadata, never the report or resume body.
 // Keep an allowlist here as well so a server regression cannot reach the renderer.
 export function guestWorkspace(result = {}) {
@@ -34,6 +36,7 @@ export async function requestGuestReport({ answers, signal, request }) {
 
 export function practiceDestination(draft = {}) {
   if (draft.report || draft.report_locked) return 'result';
-  if (draft.selected_posting_id) return 'questions';
-  return draft.resume_text || draft.resume_attached ? 'job' : 'resume';
+  if (draft.selected_posting_id) return `jobs/${encodeURIComponent(draft.selected_posting_id)}`;
+  if (draft.career_target?.role_id) return opportunityPath(draft.career_target);
+  return draft.resume_text || draft.resume_attached ? 'desired-role' : 'resume';
 }

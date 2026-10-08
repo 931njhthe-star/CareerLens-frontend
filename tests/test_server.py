@@ -219,6 +219,62 @@ class ServerTests(unittest.TestCase):
                             "script-src 'self'", response.headers["Content-Security-Policy"]
                         )
 
+    def test_design_lab_and_its_local_assets_work_without_contacting_the_configured_api(self):
+        opener = Opener(error=AssertionError("The design lab must not contact an upstream API"))
+        with self.app("https://api.example.com", opener).test_client() as client:
+            with client.get("/") as index:
+                expected_policy = index.headers["Content-Security-Policy"]
+            for path in (
+                "/design-lab",
+                "/design-lab?theme=cobalt&layout=studio&eye=glacier&pyramid=ice&effect=comet",
+                "/design-lab?theme=%3Cscript%3Ealert(1)%3C%2Fscript%3E&backend=https://invalid.test",
+            ):
+                with self.subTest(path=path), client.get(path) as response:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.mimetype, "text/html")
+                    self.assertEqual(
+                        response.data, (server.ROOT / "public" / "design-lab.html").read_bytes()
+                    )
+                    self.assertIn(b'/src/features/design-lab/index.js', response.data)
+                    self.assertNotIn(b'/src/app/main.js', response.data)
+                    self.assertNotIn(b"<script>alert(1)</script>", response.data)
+                    self.assertEqual(response.headers["Content-Security-Policy"], expected_policy)
+                    self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                    self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+                    self.assertEqual(response.headers["Cache-Control"], "no-store")
+            for name in ("index.js", "presets.js", "preview.js", "transition.js", "lab.css", "preview.css"):
+                with self.subTest(asset=name):
+                    with client.get("/src/features/design-lab/" + name) as response:
+                        self.assertEqual(response.status_code, 200)
+                        expected_types = (
+                            {"text/javascript", "application/javascript"}
+                            if name.endswith(".js")
+                            else {"text/css"}
+                        )
+                        self.assertIn(response.mimetype, expected_types)
+                        self.assertEqual(
+                            response.headers["Content-Security-Policy"], expected_policy
+                        )
+                        self.assertNotIn("'unsafe-eval'", expected_policy)
+                        self.assertNotIn("https://", expected_policy)
+        self.assertEqual(opener.calls, [])
+
+    def test_design_lab_does_not_make_environment_or_parent_paths_public(self):
+        with self.app().test_client() as client:
+            for path in (
+                "/.env",
+                "/design-lab/.env",
+                "/design-lab/../.env",
+                "/src/../.env",
+                "/src/features/design-lab/../../../.env",
+                "/src/features/design-lab/%2E%2E/%2E%2E/%2E%2E/.env",
+                "/public/../.env",
+                "/public/design-lab.html",
+            ):
+                with self.subTest(path=path), client.get(path) as response:
+                    self.assertEqual(response.status_code, 404)
+                    self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,14 +10,6 @@ const STATUS_LABEL = {
   missing: '근거 부족',
 };
 
-function validScore(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
-}
-
-function scoreLabel(value) {
-  return validScore(value) ? `${value}점` : '미산정';
-}
-
 function weightLabel(value) {
   return typeof value === 'number' && Number.isFinite(value)
     ? `${Number((value * 100).toFixed(1))}%`
@@ -107,23 +99,25 @@ function statusRadarPanel(report) {
         <p
           class="matching-eye-loading"
           role="status">
-          시연 점수를 입체적으로 그리는 중…
+          평가 요소를 입체적으로 그리는 중…
         </p>
       </div>
       <figcaption>
         <span class="pyramid-legend">
-          <span><i class="pyramid-key pyramid-key--current"></i>시연 시작 점수</span>
-          ${preview ? '<span><i class="pyramid-key pyramid-key--projected"></i>시연 변화 점수</span>' : ''}
+          <span><i class="pyramid-key pyramid-key--current"></i>기본 도형</span>
+          ${preview ? '<span><i class="pyramid-key pyramid-key--projected"></i>변화 예시</span>' : ''}
         </span>
         <strong class="evaluation-demo-notice">${DEMO_SCORE_NOTICE}</strong>
         <span>본인의 이력서나 실제 역량을 평가한 점수가 아닙니다.</span>
         ${
           preview
             ? `
-          <button class="pyramid-preview-button" type="button" data-preview-improvement aria-pressed="false">
-            점수 변화 시연 보기
-          </button>
-          <a class="pyramid-assumptions-link" href="#/result" data-section="priorities">점수 변화 시연 안내</a>
+          <div class="pyramid-preview-actions">
+            <button class="pyramid-preview-button" type="button" data-preview-improvement aria-pressed="false">
+              점수 변화 시연 보기
+            </button>
+            <a class="pyramid-assumptions-link" href="#/result" data-section="priorities">점수 변화 시연 안내</a>
+          </div>
         `
             : ''
         }
@@ -135,21 +129,18 @@ function statusRadarPanel(report) {
 function improvementPreviewMarkup(report) {
   const preview = pyramidPreview(report);
   if (!preview) return '';
-  const axes = pyramidAxes(report);
   return `
     <div class="improvement-preview" data-improvement-note>
       <div class="improvement-preview__heading">
         <h3>점수 변화 시연</h3>
-        <p>${DEMO_SCORE_NOTICE}</p>
+        <p>파란 도형이 하늘색 변화 예시로 부드럽게 바뀌는 모습을 확인하세요.</p>
       </div>
-      <dl class="evaluation-preview-scores">${axes.map((axis, index) => `<div><dt>${e(axis.label)}</dt><dd>${e(scoreLabel(axis.score))} <span aria-label="시연 변화 점수">→</span> <strong class="improvement-preview__score">${e(scoreLabel(preview.axes[index].score))}</strong></dd></div>`).join('')}</dl>
       <p>${e(preview.notice)}</p>
       <div class="improvement-preview__actions">
         <button class="button secondary compact" type="button" data-preview-improvement aria-pressed="false">
           점수 변화 시연 보기
         </button>
         <button class="text-button" type="button" data-section="report-graphics">피라미드로 이동</button>
-        <a class="back-link" href="#/resume">내 경험으로 이력서 보완하기</a>
       </div>
     </div>
   `;
@@ -184,22 +175,10 @@ export function analysisReport(draft) {
           data-section="report-graphics">
           그래픽 보기
         </button>
-        <a
-          class="button secondary compact"
-          href="#/questions">
-          ${icon('refresh', 17)} 답변 수정 · 재분석
-        </a>
       </div>
     </div>
-    <div class="result-layout">
-      <aside class="report-sidebar">
-        <h2>이번 모의지원</h2>
-        <div class="sidebar-position">
-          <span class="sidebar-mark">${icon('briefcase', 19)}</span>
-          <strong>${e(contextLabel)}</strong>
-          <p>${e(draft.role)}</p>
-          <span class="small-note">분석 완료</span>
-        </div>
+    <div class="result-layout result-layout--studio">
+      <nav class="report-section-nav" aria-label="보고서 목차">
         ${sections
           .map(
             ([id, label]) => `
@@ -211,20 +190,28 @@ export function analysisReport(draft) {
             `,
           )
           .join('')}
-        <div class="sidebar-bottom">
-          <a href="#/resume">이력서 수정</a>
-          <a href="#/job">희망 직무 수정</a>
+        <div class="report-section-nav__context">
+          <a href="#/desired-role">희망 직무 수정</a>
         </div>
-      </aside>
+      </nav>
       <article
         data-resume-score-card="true"
+        data-report-frame
         class="resume-score-card"
         tabindex="0"
         aria-label="모의지원 분석 결과">
         <header
-          class="report-hero report-hero-with-radar"
+          class="report-hero report-hero-with-radar report-studio-opening"
           id="overview">
-          <div class="report-hero-copy">
+          <div
+            class="report-visual-region"
+            id="report-graphics"
+            data-report-reveal="graphic"
+            role="region"
+            aria-label="항목별 평가 그래픽">
+            <div class="report-visual-pair report-visual-single">${statusRadarPanel(report)}</div>
+          </div>
+          <div class="report-hero-copy" data-report-reveal="heading">
             <div class="report-position">
               <span class="company-initial large">
                 ${desiredRole ? icon('briefcase', 32) : e(draft.company?.slice(0, 1))}
@@ -234,24 +221,16 @@ export function analysisReport(draft) {
                 <h1>${e(draft.role)}</h1>
               </div>
             </div>
-            <div class="verdict">
-              <h2>4개 평가축 시연</h2>
-              <span class="badge neutral">${DEMO_SCORE_NOTICE}</span>
-            </div>
+            <h2 class="report-studio-title">다음 기회로<br>이어지는 경험.</h2>
             <h3>핵심 요약</h3>
             <p class="report-summary">${e(report.summary)}</p>
-          </div>
-          <div
-            class="report-visual-region"
-            id="report-graphics"
-            role="region"
-            aria-label="항목별 평가 그래픽">
-            <div class="report-visual-pair report-visual-single">${statusRadarPanel(report)}</div>
+            <p class="report-studio-caption">선택한 ${desiredRole ? '희망 직무' : '공고'}를 기준으로 연결된 경험과 보완할 근거를 정리했습니다.</p>
           </div>
         </header>
         <div class="report-body">
           <section
             class="report-section readiness-section"
+            data-report-reveal="details"
             id="readiness">
             <h2>예정 평가 항목</h2>
             <p class="section-intro">각 축의 세부 항목과 예정 비중입니다. 현재 시연 점수는 이 비중으로 계산한 값이 아닙니다.</p>
@@ -259,6 +238,7 @@ export function analysisReport(draft) {
           </section>
           <section
             class="report-section"
+            data-report-reveal="details"
             id="evidence">
             <div class="section-heading">
               <h2>
@@ -271,7 +251,7 @@ export function analysisReport(draft) {
             </p>
             <div class="evidence-list">${evidenceMarkup(matches)}</div>
           </section>
-          <section class="report-section">
+          <section class="report-section" data-report-reveal="details">
             <div class="findings-grid">
               <div>
                 <h2>잘 드러난 강점</h2>
@@ -307,6 +287,7 @@ export function analysisReport(draft) {
           </section>
           <section
             class="report-section"
+            data-report-reveal="details"
             id="priorities">
             <h2>지원 전, 이것부터 보완하세요.</h2>
             ${improvementPreviewMarkup(report)}
@@ -328,6 +309,7 @@ export function analysisReport(draft) {
           </section>
           <section
             class="report-section"
+            data-report-reveal="details"
             id="interview">
             <h2>다음 대화에서 나올 수 있는 질문</h2>
             <ol class="interview-list">
@@ -345,14 +327,6 @@ export function analysisReport(draft) {
             <summary>예정 평가 방식과 시연 점수 안내</summary>
             ${evaluationMethodology()}
           </details>
-          <div class="report-end">
-            <p>좋은 지원서는, 확인할 수 있는 경험에서 시작됩니다.</p>
-            <a
-              class="button primary"
-              href="#/resume">
-              이력서 보완하기 ${icon('arrow', 18)}
-            </a>
-          </div>
         </div>
       </article>
     </div>

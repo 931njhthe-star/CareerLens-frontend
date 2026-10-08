@@ -294,10 +294,10 @@ export function jobDetailPage(posting, user) {
         <div class="job-detail-actions">
           ${saveButton(posting)}
           <button
-            class="button primary"
+            class="button primary workflow-next"
             id="select-posting"
             type="button">
-            이 공고로 모의지원 ${icon('arrow', 18)}
+            모의지원 결과 확인 ${icon('arrow', 18)}
           </button>
         </div>
       </div>

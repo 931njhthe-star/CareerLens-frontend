@@ -53,7 +53,7 @@ function statusError(status) {
 
 test('report loading starts incomplete even when preparation and an older report are already complete', () => {
   const source = { ...draft(), report: report() };
-  const snapshot = reportLoadingSnapshot(source, { example: '새 보완 답변' });
+  const snapshot = reportLoadingSnapshot(source);
   assert.equal(snapshot.complete, false);
   assert.deepEqual(
     snapshot.stages.map((stage) => [stage.id, stage.status]),
@@ -70,22 +70,23 @@ test('report loading starts incomplete even when preparation and an older report
 
 test('only explicit final-report success completes the overlay snapshot', () => {
   const source = { ...draft(), preparation: { complete: false } };
-  const snapshot = reportLoadingSnapshot(source, {}, true);
+  const snapshot = reportLoadingSnapshot(source, true);
   assert.equal(snapshot.complete, true);
   assert.ok(snapshot.stages.every((stage) => stage.status === 'complete'));
 });
 
-test('answer readout counts only nonempty submitted text and does not change its contents', () => {
-  const answers = {
-    first: ' 근거가 있는 답변 ',
-    blank: ' \n ',
-    empty: '',
-    number: 8,
-    missing: null,
+test('posting analysis describes only the resume and selected posting', () => {
+  const source = {
+    ...draft(),
+    analysis_mode: 'job_posting',
+    company: '가상 기업',
   };
-  const snapshot = reportLoadingSnapshot(draft(), answers);
-  assert.match(snapshot.insights[0].detail, /답변 1개/);
-  assert.equal(answers.first, ' 근거가 있는 답변 ');
+  const snapshot = reportLoadingSnapshot(source);
+  assert.equal(snapshot.stages[0].label, '이력서 확인');
+  assert.match(snapshot.stages[1].detail, /가상 기업 백엔드 개발자 공고/);
+  assert.deepEqual(snapshot.insights, []);
+  assert.doesNotMatch(JSON.stringify(snapshot), /답변|질문/);
+  assert.equal(source.answers.example, '이전 답변');
 });
 
 test('successful final analysis posts submitted answers before accepting the refreshed workspace', async () => {

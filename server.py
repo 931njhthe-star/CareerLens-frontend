@@ -128,6 +128,11 @@ def create_app(backend_url=None):
     def index():
         return send_from_directory(ROOT / "public", "index.html")
 
+    @app.get("/design-lab")
+    def design_lab():
+        """Isolated synthetic visual comparisons; no workspace or account data."""
+        return send_from_directory(ROOT / "public", "design-lab.html")
+
     @app.get("/health")
     def health():
         return jsonify(status="ok", service="careerlens-frontend", backend_configured=bool(origin))

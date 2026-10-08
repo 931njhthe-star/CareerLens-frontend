@@ -3,7 +3,6 @@ import { shell, notice, pending, bindCounters, escapeHtml } from '../shared/comp
 import { renderAuth, bindAuth } from '../features/auth/auth.js';
 import { workspacePage } from '../pages/workspace.js';
 import { draftForPage, remainingEdits } from './workspace-state.js';
-import { bindPreparation } from '../features/analysis/preparation.js';
 import { createReportLoading } from '../features/analysis/report-loading.js';
 import { requestFinalReport } from '../features/analysis/report-state.js';
 import { roleChoicesMarkup } from '../features/job-postings/job.js';
@@ -31,7 +30,7 @@ import { reportGatePage, bindReportGate } from '../features/auth/report-gate.js'
 
 const app = document.getElementById('app');
 const authPages = new Set(['login', 'email', 'signup', 'forgot', 'reset']);
-const workflowPages = new Set(['resume', 'job', 'preparing', 'questions', 'result']);
+const workflowPages = new Set(['resume', 'desired-role', 'result']);
 const params = new URLSearchParams(location.search);
 const resetToken = params.get('reset_token') || '';
 let authError = params.get('auth_error');
@@ -43,28 +42,27 @@ let returnAfterLogin;
 let loginMessage;
 let selectedPosting;
 let selectionOwner;
-let disposePreparation;
 let disposeReportLoading;
 let roleRequest;
 let disposeStatusRadar;
 let viewRevision = 0;
-let revealReportPage = false;
 const guest = { filename: '', target: null };
 let disposeOpportunities;
 let disposeIntroduction;
 let disposeReportGate;
 let guestExpiryTimer;
 
-function stopReportVisuals() {
+function stopReportVisuals({ preserveLoading } = {}) {
   viewRevision += 1;
   disposeIntroduction?.();
   disposeIntroduction = undefined;
   disposeReportGate?.();
   disposeReportGate = undefined;
-  disposePreparation?.();
-  disposePreparation = undefined;
-  disposeReportLoading?.();
-  disposeReportLoading = undefined;
+  if (disposeReportLoading !== preserveLoading?.dispose) {
+    disposeReportLoading?.();
+    disposeReportLoading = undefined;
+  }
+  delete app.dataset.reportTransition;
   roleRequest?.abort();
   roleRequest = undefined;
   disposeStatusRadar?.();
@@ -102,41 +100,78 @@ function requireLogin(page) {
 }
 
 async function selectPosting(posting) {
+  if (disposeReportLoading) return;
   selectedPosting = posting;
   selectionOwner = session.user?.id;
-  if (!session.user) {
-    if (!workspace.draft.resume_attached) {
-      navigationMessage = '선택한 공고로 분석하려면 이력서 파일을 먼저 첨부해 주세요.';
-      navigate('resume');
-      return;
-    }
-    const revision = viewRevision;
-    const result = await api(`/guest/job-postings/${encodeURIComponent(posting.id)}/select`, {
-      method: 'POST',
-      body: {},
-    });
-    if (revision !== viewRevision || session.user) return;
-    applyGuestWorkspace(result);
-    selectedPosting = null;
-    edits = {};
-    navigate('questions');
+  const member = Boolean(session.user);
+  if (!(member ? workspace.draft.resume_text : workspace.draft.resume_attached)) {
+    navigationMessage = '선택한 공고로 분석하려면 이력서를 먼저 첨부하거나 저장해 주세요.';
+    navigate('resume');
     return;
   }
-  if (workspace.draft.resume_text) {
-    const revision = viewRevision;
-    const owner = session.user.id;
-    const result = await api(`/job-postings/${encodeURIComponent(posting.id)}/select`, {
-      method: 'POST',
-      body: {},
+
+  let revision = viewRevision;
+  const owner = session.user?.id;
+  const answers = {};
+  const loading = createReportLoading({
+    draft: {
+      ...workspace.draft,
+      analysis_mode: 'job_posting',
+      company: posting.company,
+      role: posting.role,
+    },
+    onCancel() {
+      if (revision === viewRevision && owner === session.user?.id)
+        navigate(`jobs/${encodeURIComponent(posting.id)}`);
+    },
+  });
+  disposeReportLoading = loading.dispose;
+  try {
+    const result = await loading.run(async (signal) => {
+      const selection = await api(
+        `${member ? '' : '/guest'}/job-postings/${encodeURIComponent(posting.id)}/select`,
+        { method: 'POST', body: {}, signal },
+      );
+      signal.throwIfAborted();
+      if (revision !== viewRevision || owner !== session.user?.id)
+        throw new DOMException('분석 화면이 변경되었습니다.', 'AbortError');
+      if (member) applyWorkspace(selection, ['answers']);
+      else applyGuestWorkspace(selection);
+      selectedPosting = null;
+      delete edits.answers;
+      return member
+        ? requestFinalReport({ draft: workspace.draft, answers, signal, request: api })
+        : requestGuestReport({ answers, signal, request: api });
     });
-    if (revision !== viewRevision || owner !== session.user?.id) return;
+    if (loading.signal.aborted || revision !== viewRevision || owner !== session.user?.id) return;
+    // Guest reports are already reduced to the safe workspace shape by requestGuestReport.
     applyWorkspace(result, ['answers']);
-    selectedPosting = null;
-    navigate('questions');
-  } else {
-    navigationMessage = '선택한 공고로 모의지원하려면 이력서를 먼저 불러오거나 입력해 주세요.';
-    navigate('resume');
+    let view;
+    try {
+      view = renderReportBridge(loading);
+    } finally {
+      // This synchronous render owns one new revision even if markup fails.
+      revision = viewRevision;
+    }
+    await loading.reveal(view);
+    if (loading.signal.aborted || revision !== viewRevision || owner !== session.user?.id) return;
+    loading.dispose({ restoreFocus: false });
+    view.activate?.();
+  } catch (error) {
+    if (revision === viewRevision && owner === session.user?.id && error.name !== 'AbortError') {
+      delete app.dataset.reportTransition;
+      throw error;
+    }
+  } finally {
+    loading.dispose();
+    if (disposeReportLoading === loading.dispose) disposeReportLoading = undefined;
   }
+}
+
+function renderReportBridge(loading) {
+  // pushState avoids a second asynchronous hashchange render disposing the bridge.
+  history.pushState({}, '', `${location.pathname}${location.search}#/result`);
+  return render({ reportBridge: loading });
 }
 
 function navigate(page) {
@@ -248,15 +283,17 @@ async function onSession(nextSession) {
   navigate(destination);
 }
 
-function render() {
+function render({ reportBridge } = {}) {
   if (!session) return;
-  const revealReport = revealReportPage;
-  revealReportPage = false;
-  stopReportVisuals();
+  stopReportVisuals({ preserveLoading: reportBridge });
+  if (reportBridge) app.dataset.reportTransition = 'forming';
   stopCatalogLoad();
   stopResumeExamples();
   let page = location.hash.replace(/^#\//, '') || (resetToken ? 'reset' : 'intro');
-  if (page === 'practice') {
+  // Keep saved links to the former role-selection route working.
+  if (page === 'job') page = 'desired-role';
+  // Supplemental questions were removed. Old links reopen the selected posting or report.
+  if (['practice', 'questions', 'preparing'].includes(page)) {
     navigate(practiceDestination(workspace.draft));
     return;
   }
@@ -269,35 +306,25 @@ function render() {
     !authPages.has(page) &&
     !catalog &&
     !opportunities &&
-    !['intro', 'resume', 'job', 'questions', 'result'].includes(page)
+    !['intro', 'resume', 'desired-role', 'result'].includes(page)
   )
     page = 'login';
   if (session.user && authPages.has(page) && page !== 'reset')
     page = workspace.draft.report ? 'result' : 'resume';
-  if (!session.user && ['questions', 'result'].includes(page)) {
+  if (!session.user && page === 'result') {
     if (!workspace.draft.resume_attached) page = 'resume';
-    else if (!workspace.draft.selected_posting_id) page = 'job';
-    else if (page === 'result' && !workspace.draft.report_locked) page = 'questions';
+    else if (!workspace.draft.report_locked) {
+      navigate(practiceDestination(workspace.draft));
+      return;
+    }
   }
   if (session.user && page !== 'intro' && !authPages.has(page) && !catalog && !opportunities) {
     if (!workflowPages.has(page)) page = 'resume';
     if (page !== 'resume' && !workspace.draft.resume_text) page = 'resume';
-    if (workspace.draft.analysis_mode === 'desired_role') {
-      if (
-        ['preparing', 'questions'].includes(page) ||
-        (page === 'result' && !workspace.draft.report)
-      ) {
-        navigate(
-          workspace.draft.career_target ? opportunityPath(workspace.draft.career_target) : 'job',
-        );
-        return;
-      }
-    } else if (
-      page === 'preparing' ||
-      (['questions', 'result'].includes(page) && !workspace.draft.job_text)
-    )
-      page = 'job';
-    if (page === 'result' && !workspace.draft.report) page = 'questions';
+    if (page === 'result' && !workspace.draft.report) {
+      navigate(practiceDestination(workspace.draft));
+      return;
+    }
   }
   if (location.hash !== `#/${page}`)
     history.replaceState({}, '', `${location.pathname}${location.search}#/${page}`);
@@ -309,19 +336,21 @@ function render() {
     forgot: '비밀번호 찾기',
     reset: '비밀번호 재설정',
     resume: '이력서 입력',
-    job: '채용공고',
-    preparing: '모의지원 질문 준비',
-    questions: '모의지원 준비',
+    'desired-role': '희망 직무',
     result: '모의지원 결과',
   }[page];
   document.title = `${catalog || opportunities ? '채용공고' : title} · CareerLens`;
   if (page === 'intro') {
-    app.innerHTML = shell(introductionPage(), { user: session.user, page });
+    app.innerHTML = shell(introductionPage(), {
+      user: session.user,
+      page,
+      draft: workspace.draft,
+    });
     bindAccount();
     disposeIntroduction = bindIntroduction({ onComplete: () => navigate('resume') });
   } else if (opportunities) {
     if (!opportunities.role_id) {
-      navigate('job');
+      navigate('desired-role');
       return;
     }
     app.innerHTML = shell(opportunitiesPage(), {
@@ -358,7 +387,7 @@ function render() {
       rerender: render,
     });
   } else if (authPages.has(page)) {
-    app.innerHTML = renderAuth(page, session);
+    app.innerHTML = renderAuth(page, session, workspace.draft);
     bindAuth({ onSession, resetToken, navigate });
     if (loginMessage) {
       notice(loginMessage, 'info', document.getElementById('auth-notices'));
@@ -393,26 +422,19 @@ function render() {
         ? reportGatePage({ expires_at: draft.expires_at })
         : !session.user && page === 'resume'
           ? guestResumePage(draft)
-          : workspacePage(page, draft, workspace.questions || []),
-      { user: session.user, draft, page },
+          : workspacePage(page, draft),
+      { user: session.user, draft: workspace.draft, page },
     );
     bindWorkflow();
     bindCounters();
-    if (locked)
+    if (locked && !reportBridge)
       disposeReportGate = bindReportGate({
         onLogin: () => openReportLogin('email'),
         onSignup: () => openReportLogin('signup'),
         onDiscard: discardGuest,
       });
-    else if (page === 'result') mountReportVisuals();
-    if (page === 'job') bindCareerRoleOptions();
-    if (page === 'preparing')
-      disposePreparation = bindPreparation({
-        draft: workspace.draft,
-        onWorkspace: applyWorkspace,
-        onComplete: () => navigate('questions'),
-        onError: handleError,
-      });
+    else if (!locked && page === 'result') mountReportVisuals();
+    if (page === 'desired-role') bindCareerRoleOptions();
     if (page === 'resume' && session.user)
       bindResumeExamples({
         hasContent: () => Boolean(draftForPage('resume', workspace.draft, edits).resume_text),
@@ -459,24 +481,54 @@ function render() {
       notice(navigationMessage, 'success');
       navigationMessage = null;
     } else if (
-      ['questions', 'result'].includes(page) &&
+      page === 'result' &&
       ['resume_text', 'company', 'role', 'job_text', 'role_id', 'focus'].some((field) =>
         Object.hasOwn(edits, field),
       )
     ) {
       notice(
-        page === 'result'
-          ? '저장되지 않은 수정 내용이 있습니다. 이 결과는 마지막으로 저장하고 분석한 내용을 기준으로 표시합니다.'
-          : '저장되지 않은 이력서 또는 희망 직무 수정 내용이 있습니다. 질문과 분석에는 마지막으로 저장한 내용이 사용됩니다.',
+        '저장되지 않은 수정 내용이 있습니다. 이 결과는 마지막으로 저장하고 분석한 내용을 기준으로 표시합니다.',
         'info',
       );
     }
   }
-  if (page === 'result' && revealReport && session.user)
-    document.getElementById('main')?.classList.add('prepared-page-enter');
-  if (session.user || page !== 'result')
+  if (!reportBridge && (session.user || page !== 'result'))
     document.getElementById('main')?.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: 'instant' });
+  if (reportBridge) {
+    const currentRevision = viewRevision;
+    const currentOwner = session.user?.id;
+    const main = document.getElementById('main');
+    const locked = !session.user;
+    const order = { heading: 0, graphic: 1, details: 2 };
+    [...(main?.querySelectorAll('[data-report-reveal]') || [])]
+      .sort(
+        (first, second) =>
+          (order[first.dataset.reportReveal] ?? 3) - (order[second.dataset.reportReveal] ?? 3),
+      )
+      .forEach((element, index) => {
+        element.style.setProperty('--report-reveal-index', String(Math.min(index, 8)));
+      });
+    return {
+      frame: document.querySelector('[data-report-frame], [data-report-gate]') || main,
+      onReveal() {
+        if (currentRevision !== viewRevision || currentOwner !== session.user?.id) return;
+        app.dataset.reportTransition = 'revealing';
+      },
+      activate() {
+        if (currentRevision !== viewRevision || currentOwner !== session.user?.id) return;
+        // Let the last staggered details finish after the modal releases focus.
+        // Navigation clears this state along with all report visual lifecycles.
+        if (locked) {
+          disposeReportGate = bindReportGate({
+            onLogin: () => openReportLogin('email'),
+            onSignup: () => openReportLogin('signup'),
+            onDiscard: discardGuest,
+          });
+        } else main?.focus({ preventScroll: true });
+      },
+    };
+  }
 }
 
 async function handleError(error) {
@@ -544,7 +596,7 @@ async function bindCareerRoleOptions() {
   roleRequest = controller;
   const { signal } = controller;
   const draft = draftForPage(
-    'job',
+    'desired-role',
     session.user
       ? workspace.draft
       : { career_target: guest.target, role: guest.target?.label || '' },
@@ -643,7 +695,7 @@ function bindWorkflow() {
       throw new Error('분석할 이력서 파일을 먼저 선택해 주세요.');
     }
     if (selectedPosting) await selectPosting(selectedPosting);
-    else navigate('job');
+    else navigate('desired-role');
   });
   document
     .querySelectorAll('#resume-form textarea, #job-form input, #job-form textarea')
@@ -652,11 +704,6 @@ function bindWorkflow() {
         edits[field.name] = field.value;
       });
     });
-  document.querySelectorAll('#analysis-form textarea').forEach((field) => {
-    field.addEventListener('input', () => {
-      edits.answers = { ...edits.answers, [field.name]: field.value };
-    });
-  });
   bindForm('resume-form', '이력서 저장 중…', async (form) => {
     if (!session.user) {
       requireLogin('resume');
@@ -682,7 +729,7 @@ function bindWorkflow() {
       guest.target = null;
       return;
     }
-    navigate('job');
+    navigate('desired-role');
   });
   bindForm('upload-form', '불러오는 중…', async (form) => {
     if (!session.user) {
@@ -730,32 +777,6 @@ function bindWorkflow() {
     guest.target = null;
     navigate(opportunityPath(workspace.draft.career_target));
   });
-  bindForm('analysis-form', '보고서를 완성하는 중…', async (form) => {
-    const answers = Object.fromEntries(form);
-    edits.answers = { ...answers };
-    const revision = viewRevision;
-    const owner = session.user?.id;
-    const draft = workspace.draft;
-    const loading = createReportLoading({ draft, answers });
-    disposeReportLoading = loading.dispose;
-    try {
-      const result = await loading.run((signal) =>
-        session.user
-          ? requestFinalReport({ draft, answers, signal, request: api })
-          : requestGuestReport({ answers, signal, request: api }),
-      );
-      if (loading.signal.aborted || revision !== viewRevision || owner !== session.user?.id) return;
-      applyWorkspace(result, ['answers']);
-      revealReportPage = true;
-      navigate('result');
-    } catch (error) {
-      if (revision === viewRevision && owner === session.user?.id && error.name !== 'AbortError')
-        throw error;
-    } finally {
-      loading.dispose();
-      if (disposeReportLoading === loading.dispose) disposeReportLoading = undefined;
-    }
-  });
   document.getElementById('example')?.addEventListener('click', async (event) => {
     if (Object.keys(edits).length && !window.confirm('작성 중인 내용을 예시 이력서로 바꿀까요?'))
       return;
@@ -767,7 +788,7 @@ function bindWorkflow() {
       edits = {};
       navigationMessage =
         '가상 이력서를 불러왔습니다. 희망 직무를 선택하고 모의지원을 진행해 보세요.';
-      navigate('job');
+      navigate('desired-role');
     } catch (error) {
       button.disabled = false;
       button.textContent = '예시로 체험하기';
@@ -815,6 +836,14 @@ function bindWorkflow() {
 }
 
 window.addEventListener('hashchange', render);
+window.addEventListener('pagehide', () => {
+  stopReportVisuals();
+  stopCatalogLoad();
+  stopResumeExamples();
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) render();
+});
 window.addEventListener('beforeunload', (event) => {
   if (Object.keys(edits).length || hasCatalogEdits()) {
     event.preventDefault();
