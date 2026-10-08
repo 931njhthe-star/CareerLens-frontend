@@ -4,8 +4,12 @@ import { draftForPage, remainingEdits } from '../../src/app/workspace-state.js';
 import { workspacePage } from '../../src/pages/workspace.js';
 
 const saved = {
-  resume_text: '서버에 저장된 이력서', company: '회사A', role: '개발자A', job_text: '공고A',
-  answers: { experience: '저장된 답변' }, report: { score: 70, verdict: '회사A 분석', summary: '회사A 공고의 분석 결과' },
+  resume_text: '서버에 저장된 이력서',
+  company: '회사A',
+  role: '개발자A',
+  job_text: '공고A',
+  answers: { experience: '저장된 답변' },
+  report: { score: 70, verdict: '회사A 분석', summary: '회사A 공고의 분석 결과' },
 };
 
 test('editing company B without saving keeps report A labeled as company A', () => {
@@ -19,8 +23,19 @@ test('editing company B without saving keeps report A labeled as company A', () 
 });
 
 test('saving a job after navigating away from the resume keeps unsaved resume text', () => {
-  const edits = { resume_text: '아직 저장하지 않은 이력서 수정', company: '회사B', role: '개발자B', job_text: '공고B' };
-  const responseDraft = { ...saved, company: edits.company, role: edits.role, job_text: edits.job_text, report: null };
+  const edits = {
+    resume_text: '아직 저장하지 않은 이력서 수정',
+    company: '회사B',
+    role: '개발자B',
+    job_text: '공고B',
+  };
+  const responseDraft = {
+    ...saved,
+    company: edits.company,
+    role: edits.role,
+    job_text: edits.job_text,
+    report: null,
+  };
   const nextEdits = remainingEdits(edits, ['company', 'role', 'job_text']);
   assert.equal(draftForPage('resume', responseDraft, nextEdits).resume_text, edits.resume_text);
   assert.equal(draftForPage('job', responseDraft, nextEdits).resume_text, saved.resume_text);
@@ -29,7 +44,11 @@ test('saving a job after navigating away from the resume keeps unsaved resume te
 });
 
 test('saving resume or analyzing answers preserves the other editors', () => {
-  const edits = { resume_text: '편집 이력서', company: '회사B', answers: { experience: '아직 저장하지 않은 답변' } };
+  const edits = {
+    resume_text: '편집 이력서',
+    company: '회사B',
+    answers: { experience: '아직 저장하지 않은 답변' },
+  };
   const afterResume = remainingEdits(edits, ['resume_text']);
   assert.equal(draftForPage('job', saved, afterResume).company, '회사B');
   const questions = draftForPage('questions', saved, afterResume);
@@ -40,7 +59,11 @@ test('saving resume or analyzing answers preserves the other editors', () => {
 });
 
 test('changed saved analysis input invalidates old answer edits but preserves other editors', () => {
-  const edits = { resume_text: '이력서 수정 중', company: '회사B', answers: { experience: '이전 질문에 쓰던 답변' } };
+  const edits = {
+    resume_text: '이력서 수정 중',
+    company: '회사B',
+    answers: { experience: '이전 질문에 쓰던 답변' },
+  };
   const updatedJob = { ...saved, company: '회사B', answers: {}, report: null };
   const afterJob = remainingEdits(edits, ['company', 'role', 'job_text'], saved, updatedJob);
   assert.equal(afterJob.resume_text, '이력서 수정 중');

@@ -1,6 +1,6 @@
 const pageFields = {
   resume: ['resume_text'],
-  job: ['company', 'role', 'job_text'],
+  job: ['company', 'role', 'job_text', 'role_id', 'focus'],
 };
 
 // Each editor overlays only its own fields. Analysis context always comes from
@@ -14,15 +14,26 @@ export function draftForPage(page, savedDraft, edits) {
   for (const field of pageFields[page] || []) {
     if (Object.hasOwn(edits, field)) draft[field] = edits[field];
   }
+  if (page === 'job') {
+    draft.career_target = { ...savedDraft.career_target };
+    for (const field of ['role_id', 'focus']) {
+      if (Object.hasOwn(edits, field)) draft.career_target[field] = edits[field];
+    }
+  }
   return draft;
 }
 
 export function remainingEdits(edits, savedFields, previousDraft, nextDraft) {
   const next = { ...edits };
   for (const field of savedFields) delete next[field];
-  if (previousDraft && nextDraft && ['resume_text', 'company', 'role', 'job_text'].some(
-    field => (previousDraft[field] ?? '') !== (nextDraft[field] ?? ''),
-  )) {
+  if (
+    previousDraft &&
+    nextDraft &&
+    ['resume_text', 'company', 'role', 'job_text', 'career_target'].some(
+      (field) =>
+        JSON.stringify(previousDraft[field] ?? '') !== JSON.stringify(nextDraft[field] ?? ''),
+    )
+  ) {
     delete next.answers;
   }
   return next;

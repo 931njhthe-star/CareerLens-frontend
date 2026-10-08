@@ -6,21 +6,39 @@ import { renderAuth } from '../../src/features/auth/auth.js';
 
 const payload = '<img src=x onerror="alert(1)">';
 const draft = {
-  resume_text: payload, filename: payload, company: payload, role: payload, job_text: payload,
-  answers: { experience: payload }, created_at: payload,
+  resume_text: payload,
+  filename: payload,
+  company: payload,
+  role: payload,
+  job_text: payload,
+  answers: { experience: payload },
+  created_at: payload,
   report: {
-    score: 50, verdict: payload, summary: payload,
+    score: 50,
+    verdict: payload,
+    summary: payload,
     criteria: [{ label: payload, score: 12, max_score: 20, detail: payload }],
     recruiter_email: { subject: payload, body: payload },
-    matches: [{ status: 'confirmed', requirement: payload, evidence_items: [{ excerpt: payload, source_label: payload }] }],
-    strengths: [payload], gaps: [payload], priorities: [{ title: payload, detail: payload }],
-    questions: [payload], methodology: payload,
+    matches: [
+      {
+        status: 'confirmed',
+        requirement: payload,
+        evidence_items: [{ excerpt: payload, source_label: payload }],
+      },
+    ],
+    strengths: [payload],
+    gaps: [payload],
+    priorities: [{ title: payload, detail: payload }],
+    questions: [payload],
+    methodology: payload,
   },
 };
 
 test('all workspace views keep uploaded/user/report content as text', () => {
   for (const page of ['resume', 'job', 'questions', 'result']) {
-    const markup = workspacePage(page, draft, [{ id: 'experience', prompt: payload, reason: payload }]);
+    const markup = workspacePage(page, draft, [
+      { id: 'experience', prompt: payload, reason: payload },
+    ]);
     assert.ok(!markup.includes(payload), `${page} contains raw HTML`);
     assert.ok(markup.includes(escapeHtml(payload)), `${page} drops escaped content`);
   }

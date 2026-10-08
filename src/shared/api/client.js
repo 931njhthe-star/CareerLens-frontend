@@ -20,17 +20,29 @@ export async function api(path, { method = 'GET', body, signal } = {}) {
   let response;
   try {
     response = await fetch(`/api/v1${path}`, {
-      method, headers, credentials: 'same-origin', signal,
+      method,
+      headers,
+      credentials: 'same-origin',
+      signal,
       body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
     });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
-    throw new ApiError('서버에 연결할 수 없습니다. 실행 창이 열려 있는지 확인한 뒤 다시 시도해 주세요.', 0);
+    throw new ApiError(
+      '서버에 연결할 수 없습니다. 실행 창이 열려 있는지 확인한 뒤 다시 시도해 주세요.',
+      0,
+    );
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = data.error;
-    throw new ApiError(typeof error === 'string' ? error : error?.message || '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.', response.status, error?.code);
+    throw new ApiError(
+      typeof error === 'string'
+        ? error
+        : error?.message || '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      response.status,
+      error?.code,
+    );
   }
   return data;
 }
