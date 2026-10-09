@@ -25,6 +25,18 @@ const posting = {
   is_saved: false,
 };
 
+test('registered repository fixtures keep their fictional label without becoming private postings', () => {
+  const fixture = { ...posting, id: 'registered-uuid', source_type: 'backend', is_example: true };
+  const html = jobDetailPage(fixture, { id: 'member' });
+  assert.ok(html.includes('가상 예시'));
+  assert.ok(html.includes('실제 채용 중인 기업의 공고가 아닙니다.'));
+  assert.ok(!html.includes('내가 입력한 공고 · 비공개'));
+  assert.ok(html.includes('data-bookmark="registered-uuid"'));
+  const registered = jobDetailPage({ ...fixture, is_example: false }, { id: 'member' });
+  assert.ok(registered.includes('등록 공고'));
+  assert.ok(!registered.includes('본인이 직접 입력한 비공개 공고'));
+});
+
 test('selecting a posting protects saved and unsaved job content and preserves unrelated edits', () => {
   const saved = {
     resume_text: '저장된 이력서',

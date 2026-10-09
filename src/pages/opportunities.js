@@ -1,5 +1,7 @@
 import { escapeHtml as e, icon } from '../shared/components/ui.js';
 
+const isExample = (posting) => posting.source_type === 'example' || posting.is_example === true;
+
 export function opportunitiesPage() {
   return `
     <div class="page-heading opportunities-heading"><div>
@@ -24,7 +26,7 @@ export function opportunityList(items, selected) {
       (item) => `
     <button type="button" class="opportunity-row" data-posting-id="${e(item.id)}"
       aria-current="${item.id === selected ? 'true' : 'false'}">
-      <span class="opportunity-row__company">${e(item.company)}${item.source_type === 'example' ? '<span class="opportunity-example">가상 공고</span>' : ''}</span>
+      <span class="opportunity-row__company">${e(item.company)}${isExample(item) ? '<span class="opportunity-example">가상 공고</span>' : ''}</span>
       <strong>${e(item.role)}</strong>
       <span class="opportunity-row__meta">${e(item.location)} · ${e(item.experience_level)}</span>
       <span class="opportunity-row__skills">${e((item.skills || []).slice(0, 3).join(' · '))}</span>
@@ -36,7 +38,7 @@ export function opportunityList(items, selected) {
 export function opportunityDetail(posting, user) {
   return `
     <div class="opportunity-detail__header">
-      <p class="opportunity-detail__company">${e(posting.company)} ${posting.source_type === 'example' ? '<span class="badge neutral">가상 공고</span>' : ''}</p>
+      <p class="opportunity-detail__company">${e(posting.company)} ${isExample(posting) ? '<span class="badge neutral">가상 공고</span>' : ''}</p>
       <h2>${e(posting.role)}</h2>
       <dl class="opportunity-detail__facts">
         <div><dt>근무지</dt><dd>${e(posting.location)}</dd></div>
@@ -47,7 +49,7 @@ export function opportunityDetail(posting, user) {
     </div>
     <section class="opportunity-detail__body"><h3>담당 업무와 지원 요건</h3><div class="opportunity-description">${e(posting.description)}</div></section>
     <footer class="opportunity-detail__actions">
-      <p>${user ? '저장한 이력서를 이 공고의 요구사항과 비교해 모의지원 결과를 확인합니다.' : '비회원도 이 공고로 분석할 수 있어요. 완성된 보고서를 보려면 로그인·회원가입이 필요합니다.'}</p>
+      <p>${user ? '저장한 이력서를 이 공고의 요구사항과 비교해 모의지원 결과를 확인합니다.' : '로그인·회원가입 후 이 공고로 모의지원 결과를 확인할 수 있어요.'}</p>
       <button id="opportunity-apply" class="button primary workflow-next" type="button">모의지원 결과 확인 ${icon('arrow', 18)}</button>
     </footer>`;
 }

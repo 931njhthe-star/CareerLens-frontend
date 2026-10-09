@@ -381,11 +381,22 @@ async function demoApi(path, options, ApiError, catalog) {
   error(ApiError, '이 기능은 시연 계정에서 지원하지 않습니다.', 501);
 }
 
-function mapJob(posting, companyName = '') {
+function matchingCatalogPosting(posting, catalogPostings) {
+  if (posting.source_name !== 'local_markdown') return undefined;
+  return catalogPostings.find(
+    (item) =>
+      item.source_name === posting.source_name &&
+      item.source_external_id === posting.source_external_id,
+  );
+}
+
+function mapJob(posting, companyName = '', catalogPostings = []) {
+  const local = matchingCatalogPosting(posting, catalogPostings);
   const sourceMarkdown =
-    posting.source_name === 'local_markdown' && typeof posting.description === 'string'
+    local?.source_markdown ||
+    (posting.source_name === 'local_markdown' && typeof posting.description === 'string'
       ? posting.description
-      : '';
+      : '');
   const requirements = Array.isArray(posting.requirements)
     ? posting.requirements.map((item) =>
         typeof item === 'string' ? item : item.name || item.text || '',
@@ -401,18 +412,22 @@ function mapJob(posting, companyName = '') {
   const maximum = posting.career_max_months;
   return {
     id: posting.id,
-    company: companyName || posting.company_name || posting.company || '기업 정보 없음',
-    role: posting.title,
-    location: posting.location || '근무지 협의',
-    employment_type: posting.employment_type || '정보 없음',
+    company:
+      local?.company || companyName || posting.company_name || posting.company || '기업 정보 없음',
+    role: local?.role || posting.title,
+    title: local?.title || posting.title,
+    location: local?.location || posting.location || '근무지 협의',
+    employment_type: local?.employment_type || posting.employment_type || '정보 없음',
     experience_level:
-      minimum == null && maximum == null
+      local?.experience_level ||
+      (minimum == null && maximum == null
         ? '경력 요건 미정'
         : maximum == null
           ? `경력 ${Math.floor((minimum || 0) / 12)}년 이상`
-          : `경력 ${Math.floor((minimum || 0) / 12)}~${Math.floor(maximum / 12)}년`,
+          : `경력 ${Math.floor((minimum || 0) / 12)}~${Math.floor(maximum / 12)}년`),
     skills,
     description:
+      local?.description ||
       sourceMarkdown ||
       [
         posting.description,
@@ -428,6 +443,7 @@ function mapJob(posting, companyName = '') {
     source_name: posting.source_name || '',
     source_external_id: posting.source_external_id || '',
     source_type: 'backend',
+    is_example: Boolean(local),
     source_url: posting.source_url || '',
     is_saved: false,
   };
@@ -591,13 +607,10 @@ async function backendJobRecords(request, signal) {
 async function backendJobs(request, catalogPostings = [], signal) {
   const records = await backendJobRecords(request, signal);
   const companies = new Map();
-  const catalogCompanies = new Map(
-    catalogPostings.map((posting) => [posting.source_external_id, posting.company]),
-  );
   const ids = [
     ...new Set(
       records
-        .filter((posting) => !catalogCompanies.has(posting.source_external_id))
+        .filter((posting) => !matchingCatalogPosting(posting, catalogPostings))
         .map((posting) => posting.company_id)
         .filter(Boolean),
     ),
@@ -614,10 +627,7 @@ async function backendJobs(request, catalogPostings = [], signal) {
     }),
   );
   return records.map((posting) =>
-    mapJob(
-      posting,
-      catalogCompanies.get(posting.source_external_id) || companies.get(posting.company_id) || '',
-    ),
+    mapJob(posting, companies.get(posting.company_id) || '', catalogPostings),
   );
 }
 
@@ -1141,11 +1151,7 @@ export async function backendApi(path, options, request, ApiError) {
       const id = decodeURIComponent(select[2]);
       let posting = mockPosting(id, catalog.postings);
       if (!posting && !id.startsWith('mock-')) {
-        const raw = await request(`/jobs/${encodeURIComponent(id)}`, { signal });
-        const company = raw.company_id
-          ? await request(`/companies/${encodeURIComponent(raw.company_id)}`, { signal })
-          : null;
-        posting = mapJob(raw, company?.name || '');
+        posting = await backendPosting(id, request, signal, catalog.postings);
       }
       if (!posting) error(ApiError, '채용공고를 찾을 수 없습니다.', 404);
       if (isGuest) {
@@ -1174,14 +1180,15 @@ export async function backendApi(path, options, request, ApiError) {
       else bookmarks.delete(id);
       storageSet(BOOKMARKS_KEY, [...bookmarks]);
       const posting =
-        mockPosting(id, catalog.postings) || (await backendPosting(id, request, signal));
+        mockPosting(id, catalog.postings) ||
+        (await backendPosting(id, request, signal, catalog.postings));
       return { posting: { ...posting, is_saved: bookmarks.has(id) } };
     }
 
     if (detail && method === 'GET') {
       const id = decodeURIComponent(detail[1]);
       const posting = mockPosting(id, catalog.postings);
-      return { posting: posting || (await backendPosting(id, request, signal)) };
+      return { posting: posting || (await backendPosting(id, request, signal, catalog.postings)) };
     }
 
     if (customEdit && method === 'DELETE') {
@@ -1321,7 +1328,8 @@ export async function backendApi(path, options, request, ApiError) {
             posting.source_name === guest.selected_posting.source_name &&
             posting.source_external_id === guest.selected_posting.source_external_id),
       );
-      if (matching) selected = await backendPosting(matching.id, request, signal);
+      if (matching)
+        selected = await backendPosting(matching.id, request, signal, [guest.selected_posting]);
     }
     const result = await request('/resumes', {
       method: 'POST',
@@ -1359,10 +1367,10 @@ export async function backendApi(path, options, request, ApiError) {
   error(ApiError, '현재 백엔드에 없는 기능입니다. 이 화면은 실제 데이터에 반영되지 않습니다.', 501);
 }
 
-async function backendPosting(id, request, signal) {
+async function backendPosting(id, request, signal, catalogPostings = []) {
   const raw = await request(`/jobs/${encodeURIComponent(id)}`, { signal });
   let company = null;
-  if (raw.company_id) {
+  if (raw.company_id && !matchingCatalogPosting(raw, catalogPostings)) {
     try {
       company = await request(`/companies/${encodeURIComponent(raw.company_id)}`, { signal });
     } catch (failure) {
@@ -1370,5 +1378,5 @@ async function backendPosting(id, request, signal) {
       company = null;
     }
   }
-  return mapJob(raw, company?.name || '');
+  return mapJob(raw, company?.name || '', catalogPostings);
 }

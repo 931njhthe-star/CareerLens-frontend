@@ -2,9 +2,10 @@ import { escapeHtml as e, icon } from '../shared/components/ui.js';
 import { safeSourceUrl } from '../features/job-postings/catalog-state.js';
 
 const detailPath = (posting) => `#/jobs/${encodeURIComponent(posting.id)}`;
+const isExample = (posting) => posting.source_type === 'example' || posting.is_example === true;
 const sourceBadge = (posting) => `
-  <span class="badge ${posting.source_type === 'example' ? 'neutral' : 'confirmed'}">
-    ${posting.source_type === 'example' ? '가상 예시' : '내가 입력한 공고 · 비공개'}
+  <span class="badge ${isExample(posting) ? 'neutral' : 'confirmed'}">
+    ${isExample(posting) ? '가상 예시' : posting.source_type === 'manual' ? '내가 입력한 공고 · 비공개' : '등록 공고'}
   </span>
 `;
 const skillTags = (skills) => `
@@ -303,9 +304,11 @@ export function jobDetailPage(posting, user) {
       </div>
       <p class="catalog-disclaimer">
         ${
-          posting.source_type === 'example'
+          isExample(posting)
             ? '학습과 기능 체험을 위한 가상 공고입니다. 실제 채용 중인 기업의 공고가 아닙니다.'
-            : '본인이 직접 입력한 비공개 공고입니다. 원문의 정확성과 실제 모집 여부는 직접 확인해 주세요.'
+            : posting.source_type === 'manual'
+              ? '본인이 직접 입력한 비공개 공고입니다. 원문의 정확성과 실제 모집 여부는 직접 확인해 주세요.'
+              : '모의지원 분석에 사용하는 등록 공고입니다. 실제 모집 여부는 공고 출처에서 확인해 주세요.'
         }
       </p>
       <section
@@ -322,12 +325,12 @@ export function jobDetailPage(posting, user) {
                 href="${e(url)}"
                 target="_blank"
                 rel="noopener noreferrer">
-                ${posting.source_type === 'example' ? '참고한 실제 직무 자료' : '입력한 원문 링크'}
+                ${isExample(posting) ? '참고한 실제 직무 자료' : '공고 원문 링크'}
                 열기 ↗
               </a>
               <span>
                 ${
-                  posting.source_type === 'example'
+                  isExample(posting)
                     ? '가상 기업의 실제 채용 링크가 아닌 직무 참고 출처입니다. '
                     : ''
                 }새

@@ -43,8 +43,16 @@ test('frontend parses the original Markdown files into unique roles and source p
   assert.equal(catalog.postings.length, 3);
   assert.equal(catalog.postings[0].company, '예시 회사');
   assert.equal(catalog.postings[0].source_type, 'example');
+  assert.equal(catalog.postings[0].is_example, true);
   assert.match(catalog.postings[0].description, /원문 자격/);
   assert.equal(catalog.postings[0].source_markdown, original.content);
+});
+
+test('catalog source identity uses the actual filename supplied by the local endpoint', () => {
+  const item = { ...markdown('001', '직무', '회사'), filename: '001-revised.md' };
+  const catalog = parseCareerCatalog([item]);
+  assert.equal(catalog.postings[0].source_external_id, '001-revised.md');
+  assert.equal(catalog.postings[0].id, 'backup-001');
 });
 
 test('frontend rejects malformed source files instead of hiding them', () => {

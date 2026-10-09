@@ -101,7 +101,7 @@ test('registered Markdown jobs replace local mock duplicates and keep the backen
   const raw = {
     id: 'job-db-001',
     company_id: 'company-db-001',
-    title: '예시 직무 채용',
+    title: '등록 공고 제목',
     source_name: 'local_markdown',
     source_external_id: '001.md',
     description: markdown.content,
@@ -125,11 +125,20 @@ test('registered Markdown jobs replace local mock duplicates and keep the backen
   assert.equal(list.items[0].id, 'job-db-001');
   assert.equal(list.items[0].source_type, 'backend');
   assert.equal(list.items[0].source_external_id, '001.md');
+  assert.equal(list.items[0].role, '예시 직무');
+  assert.equal(list.items[0].title, '예시 직무 채용');
+  assert.equal(list.items[0].location, '서울');
+  assert.equal(list.items[0].employment_type, '정규직');
+  assert.equal(list.items[0].experience_level, '신입');
+  assert.equal(list.items[0].source_markdown, markdown.content);
+  assert.equal(list.items[0].is_example, true);
 
   const detail = await backendApi('/job-postings/job-db-001', {}, request, ApiError);
   assert.equal(detail.posting.id, 'job-db-001');
   assert.equal(detail.posting.company, '예시 회사');
   assert.equal(detail.posting.source_markdown, markdown.content);
+  assert.equal(detail.posting.role, '예시 직무');
+  assert.equal(detail.posting.is_example, true);
 
   const workspace = await backendApi(
     '/job-postings/job-db-001/select',
@@ -138,7 +147,39 @@ test('registered Markdown jobs replace local mock duplicates and keep the backen
     ApiError,
   );
   assert.equal(workspace.draft.selected_posting_id, 'job-db-001');
-  assert.equal(workspace.draft.role, '예시 직무 채용');
+  assert.equal(workspace.draft.role, '예시 직무');
+  assert.match(workspace.draft.job_text, /원본 업무 설명/);
+});
+
+test('a filename shared by another source cannot borrow a local fixture identity or content', async () => {
+  sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');
+  const local = sourceMarkdown('001', '로컬 직무', '로컬 회사');
+  const external = {
+    id: 'external-job',
+    company_id: 'external-company',
+    source_name: 'external_feed',
+    source_external_id: '001.md',
+    title: '외부 직무',
+    description: '외부 공고 본문',
+    location: '부산',
+  };
+  const request = async (path) => {
+    if (path === '/local-data/career-markdown') return { items: [local, sourceMarkdown('002')] };
+    if (path === '/jobs?limit=100') return [external];
+    if (path === '/companies/external-company') return { name: '외부 회사' };
+    if (path === '/jobs/external-job') return external;
+    throw new Error(`Unexpected call: ${path}`);
+  };
+  const list = await backendApi('/job-postings', {}, request, ApiError);
+  assert.equal(list.total, 1);
+  assert.equal(list.items[0].company, '외부 회사');
+  assert.equal(list.items[0].role, '외부 직무');
+  assert.equal(list.items[0].is_example, false);
+  const detail = await backendApi('/job-postings/external-job', {}, request, ApiError);
+  assert.equal(detail.posting.description, '외부 공고 본문');
+  assert.equal(detail.posting.source_markdown, '');
+  assert.equal(detail.posting.location, '부산');
+  assert.equal(detail.posting.source_type, 'backend');
 });
 
 test('an unmatched guest role returns an empty preview rather than inventing a posting', async () => {
@@ -685,6 +726,13 @@ for (const registered of [true, false]) {
     assert.equal(claimed.draft.report, undefined);
     assert.equal(calls.includes('/evaluations'), false);
     assert.equal(calls.includes('/jobs?limit=100&offset=100'), registered);
+    if (registered) {
+      assert.equal(
+        JSON.parse(sessionStorage.getItem('careerlens.backend.workspace:member-1')).selected_posting
+          .is_example,
+        true,
+      );
+    }
     assert.equal(sessionStorage.getItem('careerlens.backend.guest'), null);
   });
 }

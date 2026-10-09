@@ -54,6 +54,22 @@ test('role filters, selected posting and pagination round-trip without uploading
   assert.equal(opportunityRoute('#/questions'), null);
 });
 
+test('registered fictional postings keep their badge and analysis identity in both panes', () => {
+  const posting = {
+    id: 'registered-posting',
+    source_type: 'backend',
+    is_example: true,
+    company: '가상 기업',
+    role: '에이전트 엔지니어',
+    description: '파일의 공고 본문',
+    skills: [],
+  };
+  const list = opportunityList([posting], posting.id);
+  assert.ok(list.includes('data-posting-id="registered-posting"'));
+  assert.ok(list.includes('가상 공고'));
+  assert.ok(opportunityDetail(posting, { id: 'member' }).includes('가상 공고'));
+});
+
 test('master-detail content escapes DB fields and guests may analyze before result login', () => {
   const attack = '<img src=x onerror=alert(1)>';
   const posting = {

@@ -74,8 +74,9 @@ export function parseCareerCatalog(items) {
       description: postingDescription(item.content),
       source_markdown: item.content,
       source_name: 'local_markdown',
-      source_external_id: `${item.id}.md`,
+      source_external_id: item.filename || `${item.id}.md`,
       source_type: 'example',
+      is_example: true,
       is_saved: false,
     };
   });
