@@ -41,6 +41,13 @@ export const analysisStyles = `
     width: 100%;
     height: 100%;
   }
+  .cl-analysis-eye__entrance {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
   .cl-analysis-eye__leaders {
     position: absolute;
     inset: 0;

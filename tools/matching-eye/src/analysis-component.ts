@@ -26,6 +26,14 @@ import {
   criterionAssignmentsForSlot,
 } from './analysis-criteria.ts';
 import { analysisFoldScale, analysisViewport, projectFibreTip } from './analysis-projection.ts';
+import {
+  createLiquidKnots,
+  eyeEntranceFrame,
+  liquidFrontier,
+  projectLiquidTip,
+} from './analysis-liquid.ts';
+import type { AnalysisEyeEntrance } from './analysis-liquid.ts';
+import { AnalysisLiquidRenderer, createEntranceRing } from './analysis-liquid-renderer.ts';
 
 const mounts = new WeakMap<HTMLElement, () => void>();
 const ns = 'http://www.w3.org/2000/svg';
@@ -159,6 +167,10 @@ export interface AnalysisEyeOptions {
   surface?: 'card' | 'overlay';
   purpose?: AnalysisPurpose;
   palette?: AnalysisEyePalette;
+  /** Radial remains the default and the original renderer is kept for rollback. */
+  gauge?: 'liquid' | 'radial';
+  /** Rotation is in radians; the API request and four-second minimum run concurrently. */
+  entrance?: AnalysisEyeEntrance;
 }
 
 /** Actual API stages control completion; only their presentation has a minimum duration. */
@@ -177,6 +189,7 @@ export function mountAnalysisEye(
   let snapshot = normalizeAnalysis(initial);
   const transparentSurface = options.surface === 'overlay';
   const purpose = options.purpose === 'report' ? 'report' : 'preparation';
+  const liquid = options.gauge === 'liquid';
   // One geometry and binding set survives API updates, resize and SVG fallback.
   const panelFibres = createAnalysisFibres(fibreCountForWidth(container.clientWidth));
   let readouts = analysisReadouts(initial, snapshot, purpose);
@@ -185,6 +198,7 @@ export function mountAnalysisEye(
     panelFibres,
     createAnalysisRunSeed(),
   );
+  const liquidKnots = createLiquidKnots(assignments);
   let compact = container.clientWidth < 700;
   const abort = new AbortController();
   const { signal } = abort;
@@ -205,6 +219,7 @@ export function mountAnalysisEye(
   }
   root.dataset.surface = transparentSurface ? 'overlay' : 'card';
   root.dataset.purpose = purpose;
+  root.dataset.gauge = liquid ? 'liquid' : 'radial';
   const style = element('style');
   style.textContent = analysisStyles;
   const scene = element('div', 'cl-analysis-eye__scene');
@@ -239,11 +254,15 @@ export function mountAnalysisEye(
   const note = element(
     'p',
     'cl-analysis-eye__note',
-    options.palette?.fiber
-      ? '선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.'
-      : '금빛 선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.',
+    liquid
+      ? '물결과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.'
+      : options.palette?.fiber
+        ? '선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.'
+        : '금빛 선과 게이지는 시각화 진행이며, 항목별 평가 결과가 아닙니다.',
   );
   visual.append(canvas);
+  const entrance = options.entrance ? createEntranceRing() : null;
+  if (entrance) visual.append(entrance.svg);
   scene.append(visual, leaders, panelList);
   root.append(style, scene, summary, note, accessibleStages, progress);
   container.replaceChildren(root);
@@ -251,6 +270,7 @@ export function mountAnalysisEye(
   let disposed = false;
   let visible = true;
   let renderer: AnalysisEyeRenderer | null = null;
+  let liquidRenderer: AnalysisLiquidRenderer | null = null;
   let fallback: Fallback | null = null;
   let frameRequest = 0;
   let finishTimer = 0;
@@ -261,6 +281,8 @@ export function mountAnalysisEye(
   let resolveFinish: (() => void) | null = null;
   let rejectFinish: ((error: unknown) => void) | null = null;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let waveElapsed = 0;
+  let motionElapsed = 0;
 
   function stopFrame(): void {
     if (frameRequest) cancelAnimationFrame(frameRequest);
@@ -276,10 +298,14 @@ export function mountAnalysisEye(
     resizeFallback();
   }
   function resizeFallback(): void {
-    if (!fallback) return;
     const bounds = visual.getBoundingClientRect();
     const { halfWidth, halfHeight } = analysisViewport(bounds.width, bounds.height);
-    fallback.svg.setAttribute(
+    liquidRenderer?.resize(bounds.width, bounds.height);
+    entrance?.svg.setAttribute(
+      'viewBox',
+      `${-halfWidth} ${-halfHeight} ${halfWidth * 2} ${halfHeight * 2}`,
+    );
+    fallback?.svg.setAttribute(
       'viewBox',
       `${-halfWidth} ${-halfHeight} ${halfWidth * 2} ${halfHeight * 2}`,
     );
@@ -302,14 +328,25 @@ export function mountAnalysisEye(
       : isTop
         ? box.bottom - bounds.top - 19
         : box.top - bounds.top + 19;
-    const projected = projectFibreTip(
-      panel.fibre,
-      fill,
-      visualBounds.width,
-      visualBounds.height,
-      fold,
-      reducedMotion.matches,
-    );
+    const projected = liquid
+      ? projectLiquidTip(
+          liquidKnots,
+          panel.fibre.angle,
+          fill,
+          waveElapsed,
+          visualBounds.width,
+          visualBounds.height,
+          fold,
+          reducedMotion.matches,
+        )
+      : projectFibreTip(
+          panel.fibre,
+          fill,
+          visualBounds.width,
+          visualBounds.height,
+          fold,
+          reducedMotion.matches,
+        );
     const endX = visualBounds.left - bounds.left + projected.x;
     const endY = visualBounds.top - bounds.top + projected.y;
     const elbowX = startX + (isLeft ? 22 : -22);
@@ -318,8 +355,14 @@ export function mountAnalysisEye(
     panel.anchor.setAttribute('cy', String(endY));
     panel.anchor.dataset.fibreId = String(panel.fibre.id);
   }
-  function renderPanels(now: number, fold: number, fill: number): void {
-    const elapsed = now - startedAt;
+  function renderPanels(
+    now: number,
+    fold: number,
+    fill: number,
+    reveal = 1,
+    calloutElapsed?: number,
+  ): void {
+    const elapsed = calloutElapsed ?? now - startedAt;
     panels.forEach((panel, index) => {
       const report = purpose === 'report';
       const active = !compact || index < (report ? 2 : 1);
@@ -361,9 +404,10 @@ export function mountAnalysisEye(
             ? '확인 완료'
             : '확인 중';
       const opacity =
-        snapshot.hasError || (reducedMotion.matches && !report)
+        reveal *
+        (snapshot.hasError || (reducedMotion.matches && !report)
           ? 1 - fold
-          : cycle.opacity * (1 - fold);
+          : cycle.opacity * (1 - fold));
       panel.root.style.opacity = opacity.toFixed(3);
       panel.root.style.transform = reducedMotion.matches
         ? ''
@@ -373,7 +417,12 @@ export function mountAnalysisEye(
         : `blur(${((1 - opacity) * 1.1).toFixed(2)}px)`;
       panel.leader.style.opacity = (opacity * 0.85).toFixed(3);
       panel.line.style.strokeDashoffset = reducedMotion.matches ? '0' : String(1 - opacity);
-      const growth = panel.fibre ? fibreSegment(panel.fibre, fill).growth : 0;
+      const growth = panel.fibre
+        ? liquid
+          ? liquidFrontier(liquidKnots, panel.fibre.angle, fill, waveElapsed, reducedMotion.matches)
+              .growth
+          : fibreSegment(panel.fibre, fill).growth
+        : 0;
       panel.root.dataset.gaugeProgress = (growth * 100).toFixed(2);
       panel.fill.style.transform = `scaleX(${growth.toFixed(6)})`;
       placeLeader(panel, fill, fold);
@@ -395,14 +444,25 @@ export function mountAnalysisEye(
   }
   function draw(now = performance.now()): void {
     if (disposed) return;
-    const fill = timeline.progress(now);
     const fold = finishRequested && foldOnFinish ? timeline.fold(now) : 0;
     const elapsed = Math.max(0, now - startedAt);
+    if (!snapshot.hasError) motionElapsed = elapsed;
+    const entranceFrame = eyeEntranceFrame(motionElapsed, options.entrance, reducedMotion.matches);
+    const eyeElapsed = entranceFrame.eyeElapsed;
+    // Start water at the pupil after synchronization, while the API timer keeps running.
+    const fill = timeline.progress(now) * entranceFrame.fillReveal;
+    if (!snapshot.hasError) waveElapsed = eyeElapsed;
     const presented =
-      (groupFibreProgress(panelFibres, fill, 'resume') +
-        groupFibreProgress(panelFibres, fill, 'role') +
-        groupFibreProgress(panelFibres, fill, 'report')) /
-      3;
+      liquid && liquidKnots.length
+        ? liquidKnots.reduce(
+            (total, knot) =>
+              total + liquidFrontier(liquidKnots, knot.angle, fill, waveElapsed, true).growth,
+            0,
+          ) / liquidKnots.length
+        : (groupFibreProgress(panelFibres, fill, 'resume') +
+            groupFibreProgress(panelFibres, fill, 'role') +
+            groupFibreProgress(panelFibres, fill, 'report')) /
+          3;
     const percentValue = Math.floor(presented * 100);
     percent.textContent = `${percentValue}%`;
     progress.setAttribute('aria-valuenow', String(percentValue));
@@ -411,18 +471,35 @@ export function mountAnalysisEye(
       ? 'error'
       : fold > 0
         ? 'folding'
-        : elapsed < EYE_DRAW_MS
-          ? 'drawing'
-          : snapshot.complete
-            ? 'finishing'
-            : 'analyzing';
+        : !entranceFrame.synchronized
+          ? 'synchronizing'
+          : eyeElapsed < EYE_DRAW_MS
+            ? 'drawing'
+            : snapshot.complete
+              ? 'finishing'
+              : 'analyzing';
     visual.style.opacity = (
       reducedMotion.matches ? 1 - fold : 1 - smoothstep((fold - 0.65) / 0.35)
     ).toFixed(3);
-    renderPanels(now, fold, fill);
+    renderPanels(
+      now,
+      fold,
+      fill,
+      reducedMotion.matches ? 1 : smoothstep(eyeElapsed / 180),
+      purpose === 'report' ? entranceFrame.calloutElapsed : undefined,
+    );
     if (visible && !document.hidden) {
+      if (entrance) {
+        entrance.svg.style.opacity = String(entranceFrame.opacity * (1 - fold));
+        entrance.svg.style.display = entranceFrame.opacity ? '' : 'none';
+        entrance.ring.setAttribute(
+          'transform',
+          `rotate(${(entranceFrame.rotation * 180) / Math.PI}) scale(${entranceFrame.radius / 61})`,
+        );
+      }
+      liquidRenderer?.render(eyeElapsed, fill, fold, reducedMotion.matches, snapshot.hasError);
       try {
-        renderer?.render(elapsed, fill, fold, reducedMotion.matches, snapshot.hasError);
+        renderer?.render(eyeElapsed, fill, fold, reducedMotion.matches, snapshot.hasError);
       } catch {
         useFallback();
       }
@@ -430,7 +507,7 @@ export function mountAnalysisEye(
         fallback.outlines.forEach((outline) =>
           outline.setAttribute(
             'stroke-dasharray',
-            `${100 * (reducedMotion.matches ? 1 : smoothstep(elapsed / EYE_DRAW_MS))} 100`,
+            `${100 * (reducedMotion.matches ? 1 : smoothstep(eyeElapsed / EYE_DRAW_MS))} 100`,
           ),
         );
         fallback.fibres.forEach(({ descriptor, path, tip }) => {
@@ -458,7 +535,7 @@ export function mountAnalysisEye(
                 ? 0
                 : descriptor.brightness *
                     0.78 *
-                    (reducedMotion.matches ? 1 : Math.min(1, elapsed / 480)),
+                    (reducedMotion.matches ? 1 : Math.min(1, eyeElapsed / 480)),
             ),
           );
           tip.setAttribute('cx', segment.tip[0].toFixed(2));
@@ -466,7 +543,7 @@ export function mountAnalysisEye(
           tip.setAttribute(
             'opacity',
             String(
-              reducedMotion.matches || snapshot.hasError || segment.growth < 0.01
+              reducedMotion.matches || snapshot.hasError || eyeElapsed <= 0 || segment.growth < 0.01
                 ? 0
                 : Math.min(0.4, (1 - fill) * 20),
             ),
@@ -565,13 +642,21 @@ export function mountAnalysisEye(
     },
     { signal },
   );
-  try {
-    renderer = new AnalysisEyeRenderer(canvas, transparentSurface, panelFibres, options.palette);
-    container.dataset.renderer = 'webgl';
-    const bounds = visual.getBoundingClientRect();
-    renderer.resize(Math.max(1, bounds.width), Math.max(1, bounds.height));
-  } catch {
-    useFallback();
+  if (liquid) {
+    liquidRenderer = new AnalysisLiquidRenderer(liquidKnots);
+    canvas.replaceWith(liquidRenderer.svg);
+    container.dataset.renderer = 'svg-liquid';
+    resizeFallback();
+  } else {
+    try {
+      renderer = new AnalysisEyeRenderer(canvas, transparentSurface, panelFibres, options.palette);
+      container.dataset.renderer = 'webgl';
+      const bounds = visual.getBoundingClientRect();
+      renderer.resize(Math.max(1, bounds.width), Math.max(1, bounds.height));
+    } catch {
+      useFallback();
+    }
+    resizeFallback();
   }
   const resize = new ResizeObserver(() => {
     if (disposed) return;
@@ -622,6 +707,8 @@ export function mountAnalysisEye(
     intersection.disconnect();
     renderer?.dispose();
     renderer = null;
+    liquidRenderer?.dispose();
+    liquidRenderer = null;
     root.remove();
     if (mounts.get(container) === dispose) {
       mounts.delete(container);

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
-    "test": "node --test ../../tests/unit/matching-eye.test.mjs ../../tests/unit/analysis-eye.test.mjs ../../tests/unit/analysis-motion.test.mjs ../../tests/unit/analysis-fibres.test.mjs"
+    "test": "node --test ../../tests/unit/matching-eye.test.mjs ../../tests/unit/analysis-eye.test.mjs ../../tests/unit/analysis-motion.test.mjs ../../tests/unit/analysis-fibres.test.mjs ../../tests/unit/analysis-liquid.test.mjs"
   },
   "dependencies": {
     "three": "0.186.1"

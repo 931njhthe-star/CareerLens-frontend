@@ -133,6 +133,11 @@ def create_app(backend_url=None):
         """Isolated synthetic visual comparisons; no workspace or account data."""
         return send_from_directory(ROOT / "public", "design-lab.html")
 
+    @app.get("/motion-preview")
+    def motion_preview():
+        """Actual motion modules with synthetic progress and no analysis requests."""
+        return send_from_directory(ROOT / "public", "motion-preview.html")
+
     @app.get("/health")
     def health():
         return jsonify(status="ok", service="careerlens-frontend", backend_configured=bool(origin))

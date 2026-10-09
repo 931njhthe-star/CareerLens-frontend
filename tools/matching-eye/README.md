@@ -1,19 +1,32 @@
 # CareerLens eye graphics
 
+Latest correction: production `analysisEyeGauge` has been restored to `radial` at
+the user's request. The liquid implementation described below is retained source,
+not the active selection. `/motion-preview` now uses `fixed-anchor-study.js` for
+the new review study: a circle formed at the final pupil position/radius, rotation
+accelerating in place, and dense radial fibres. This study is not yet the production
+API-bound renderer. See `docs/product/motion-journey.md` for current scope.
+
 ## Current final-report loading eye
 
-The active flow mounts `mountAnalysisEye(host, snapshot, { surface: 'overlay', purpose: 'report' })`
-when **모의지원 결과 확인** is selected on a posting. There is no supplemental-answer
-page. The posting dims first; the outer eye and
-pupil outlines draw together. Fine sapphire needles grow from the open pupil edge
-outward at independent deterministic speeds. There is no angular sweep or filled
-colour sector. The 12 subcriteria are randomly assigned to individual needles once
-per analysis run. Each rotating callout gauge follows its assigned needle, and
-the assignment remains stable through API updates, resizing and SVG fallback.
-The gauges show visual growth, not per-criterion server progress or scores.
+The active flow mounts `mountAnalysisEye(host, snapshot, { surface: 'overlay', purpose: 'report', gauge: 'liquid', entrance })`
+when **모의지원 결과 확인** is selected on a posting. The heading's rotating circle
+travels into the eye, accelerates and synchronizes with the pupil before the eye
+outline draws. A filled sapphire/cyan annulus expands from the empty pupil's edge
+toward the outer iris. Its continuous rippling boundary has twelve independently
+varying heights. Callouts follow the same angular bindings and boundary values.
+These are visual progress values, not per-criterion server progress or scores.
+
+The original needle renderer remains available with `gauge: 'radial'`, which is
+also the library default for existing callers. Production selection lives in
+`src/shared/design/selected-theme.js` as `analysisEyeGauge`. Switching this constant
+needs no rebuild. The synthetic `/motion-preview` route compares both versions.
+See `docs/product/motion-journey.md` for the complete journey and recovery instructions.
 
 - `src/analysis-criteria.ts`: the 12 subcriteria and per-run needle assignments.
 - `src/analysis-fibres.ts`: editable needle count, onset, growth and taper.
+- `src/analysis-liquid.ts`: periodic radial water frontier and entrance timing.
+- `src/analysis-liquid-renderer.ts`: SVG water surface, pupil sync and eye outline.
 - `src/analysis-renderer.ts`: GPU geometry/material, palette-driven light and a transparent pupil.
 - `src/analysis-component.ts`: accessible status, SVG fallback, callouts and cleanup.
 - `src/analysis-timing.ts`: 4-second minimum, error pause, smooth completion and fold.
@@ -22,7 +35,7 @@ The gauges show visual growth, not per-criterion server progress or scores.
 The eye waits for both a four-second minimum and an actual successful analysis
 response. Members then see the report; guests reach the locked result gate until
 authentication and claim succeed. A slower request never starts another four-second
-wait. The fallback uses the same needle descriptors and growth law. The standalone
+wait. The retained radial fallback uses the same needle descriptors and growth law. The standalone
 bundle still needs no Node runtime when Flask serves the app.
 
 ## Current four-axis report demonstration

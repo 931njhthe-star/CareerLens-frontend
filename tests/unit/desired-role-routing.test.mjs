@@ -25,10 +25,11 @@ const controller = readFileSync(new URL('../../src/app/main.js', import.meta.url
   .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
   .replace(/\bstart\(\);\s*$/, '');
 
-function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
+function routeFixture({ member = false, draft = {}, edits = {}, motion = false } = {}) {
   const elements = new Map();
-  const calls = { catalog: 0, opportunities: [], gates: 0 };
-  const element = () => ({
+  const calls = { catalog: 0, opportunities: [], gates: 0, journeys: [], observers: [] };
+  let heading;
+  const element = (id) => ({
     dataset: {},
     innerHTML: '',
     value: '',
@@ -36,6 +37,7 @@ function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
     addEventListener() {},
     focus() {},
     classList: { add() {} },
+    querySelector: () => (id === 'main' && motion ? heading : null),
     querySelectorAll: () => [],
   });
   let markup = '';
@@ -47,7 +49,11 @@ function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
     set innerHTML(value) {
       markup = value;
       elements.clear();
-      for (const match of value.matchAll(/\bid="([^"]+)"/g)) elements.set(match[1], element());
+      heading = /data-intro-journey|class="page-heading|class="posting-detail__header/.test(value)
+        ? { isConnected: true }
+        : null;
+      for (const match of value.matchAll(/\bid="([^"]+)"/g))
+        elements.set(match[1], element(match[1]));
     },
   };
   let hash = '#/desired-role';
@@ -81,6 +87,18 @@ function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
     window: { addEventListener() {}, scrollTo() {} },
     URLSearchParams,
     AbortController,
+    MutationObserver: class {
+      constructor(callback) {
+        this.callback = callback;
+        calls.observers.push(this);
+      }
+      observe(target) {
+        this.target = target;
+      }
+      disconnect() {
+        this.disconnected = true;
+      }
+    },
     setTimeout() {},
     clearTimeout() {},
     shell,
@@ -100,6 +118,29 @@ function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
     roleChoicesMarkup,
     guestWorkspace,
     practiceDestination,
+    mountJourneyMotion(host, options) {
+      const state = {
+        host,
+        options,
+        updates: [],
+        disposed: false,
+        snapshot: { ...options.snapshot, phase: options.phase, rotation: 1.75, progress: 2.6 },
+      };
+      calls.journeys.push(state);
+      return {
+        capture: () => ({ ...state.snapshot }),
+        update(next) {
+          if (next.phase !== undefined) {
+            state.updates.push(next.phase);
+            state.snapshot.phase = next.phase;
+          }
+          if (next.host) state.host = next.host;
+        },
+        dispose() {
+          state.disposed = true;
+        },
+      };
+    },
     stopCatalogLoad() {},
     stopResumeExamples() {},
     clearCatalogEdits() {},
@@ -149,6 +190,10 @@ function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
       return markup;
     },
     element: (id) => elements.get(id),
+    replaceCatalogHeading() {
+      heading = { isConnected: true };
+      calls.observers.at(-1)?.callback();
+    },
     snapshot: () => JSON.parse(vm.runInContext('JSON.stringify({workspace, edits})', context)),
     bridge() {
       context.testBridge = {
@@ -163,6 +208,10 @@ function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
       vm.runInContext('session = {user: {id: "different-owner"}}', context);
     },
     transitionState: () => app.dataset.reportTransition,
+    resumeMotion(action) {
+      context.resumeAction = action;
+      return vm.runInContext('withResumeMotion(resumeAction)', context);
+    },
     async render(route = location.hash) {
       location.hash = route;
       // A real browser dispatches hashchange after navigate updates location.
@@ -471,4 +520,122 @@ test('navigation disposes the retained modal and makes its late reveal callback 
   assert.equal(fixture.transitionState(), undefined);
   assert.equal(fixture.calls.gates, 0);
   assert.equal(fixture.location.hash, '#/resume');
+});
+
+test('workflow navigation retargets one journey instance through async catalog loading', async () => {
+  const fixture = routeFixture({ draft: { resume_attached: true }, motion: true });
+  await fixture.render('#/desired-role');
+  const first = fixture.calls.journeys[0];
+  assert.equal(first.options.phase, 'elements');
+
+  await fixture.render('#/resume');
+  assert.equal(first.disposed, false);
+  assert.equal(fixture.calls.journeys.length, 1);
+  assert.equal(first.snapshot.phase, 'idle');
+
+  await fixture.render('#/jobs');
+  assert.equal(first.disposed, false, 'loading must not remove the active canvas');
+  assert.equal(first.snapshot.phase, 'orbit', 'target advances before async heading arrives');
+  assert.equal(fixture.calls.journeys.length, 1);
+  assert.equal(fixture.calls.observers.length, 1);
+  const previousHost = first.host;
+  fixture.replaceCatalogHeading();
+  assert.notEqual(first.host, previousHost);
+  assert.equal(fixture.calls.journeys.length, 1, 'late heading only rebinds the host');
+  await fixture.render('#/desired-role');
+  assert.equal(first.disposed, false);
+  assert.equal(first.snapshot.phase, 'elements');
+  assert.equal(fixture.calls.journeys.length, 1);
+
+  await fixture.render('#/email');
+  assert.equal(fixture.calls.observers[0].disconnected, true);
+  assert.equal(first.disposed, true, 'authentication does not retain a moving canvas');
+  assert.equal(fixture.calls.journeys.length, 1);
+});
+
+test('failed uploads return to the resume seed and late failure cannot alter a replacement page', async () => {
+  for (const attached of [false, true]) {
+    const fixture = routeFixture({ draft: { resume_attached: attached }, motion: true });
+    await fixture.render('#/resume');
+    const original = fixture.calls.journeys[0];
+    await assert.rejects(
+      fixture.resumeMotion(async () => {
+        throw new Error('Upload rejected');
+      }),
+      /Upload rejected/,
+    );
+    assert.deepEqual(original.updates, ['uploading', 'idle']);
+
+    let rejectUpload;
+    const pending = fixture.resumeMotion(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectUpload = reject;
+        }),
+    );
+    const rejection = assert.rejects(pending, /Late rejection/);
+    await fixture.render('#/desired-role');
+    const active = fixture.calls.journeys.at(-1);
+    const updates = [...active.updates];
+    rejectUpload(new Error('Late rejection'));
+    await rejection;
+    assert.equal(original.disposed, false);
+    assert.equal(active, original, 'the same renderer now belongs to the desired-role page');
+    assert.equal(active.snapshot.phase, 'elements');
+    assert.deepEqual(active.updates, updates, 'stale upload must not retarget the active page');
+  }
+});
+
+for (const member of [false, true]) {
+  test(`${member ? 'member' : 'guest'} saved resume never skips the page-specific motion stages`, async () => {
+    const fixture = routeFixture({
+      member,
+      motion: true,
+      draft: {
+        ...(member ? { resume_text: '저장된 가상 이력서' } : { resume_attached: true }),
+        career_target: { role_id: 'backend', label: '백엔드 개발자' },
+      },
+    });
+    await fixture.render('#/intro');
+    assert.equal(fixture.calls.journeys.length, 0, 'intro has no journey decoration');
+    await fixture.render('#/resume');
+    assert.equal(fixture.calls.journeys.at(-1).options.phase, 'idle');
+    await fixture.resumeMotion(async () => 'uploaded');
+    assert.deepEqual(fixture.calls.journeys.at(-1).updates, ['uploading', 'uploading']);
+    await fixture.render('#/desired-role');
+    assert.equal(fixture.calls.journeys.at(-1).snapshot.phase, 'elements');
+    await fixture.render('#/opportunities?role_id=backend&label=백엔드%20개발자');
+    assert.equal(fixture.calls.journeys.at(-1).snapshot.phase, 'orbit');
+    assert.equal(fixture.calls.journeys.length, 1);
+    const circle = fixture.calls.journeys.at(-1);
+    await fixture.render('#/intro');
+    assert.equal(circle.disposed, true);
+    assert.equal(
+      fixture.calls.journeys.at(-1),
+      circle,
+      'returning home never mounts a dot or ring',
+    );
+    await fixture.render('#/resume');
+    assert.equal(fixture.calls.journeys.at(-1).options.phase, 'idle');
+    assert.equal(fixture.calls.journeys.at(-1).options.snapshot, undefined);
+    assert.notEqual(fixture.calls.journeys.at(-1), circle, 'home ends the previous journey');
+  });
+}
+
+test('async posting heading replacements keep the same in-progress renderer', async () => {
+  const fixture = routeFixture({ draft: { resume_attached: true }, motion: true });
+  await fixture.render('#/jobs');
+  assert.equal(fixture.calls.journeys.length, 0, 'loading markup has no misplaced anchor');
+  fixture.replaceCatalogHeading();
+  const initial = fixture.calls.journeys[0];
+  assert.equal(initial.options.phase, 'orbit');
+  initial.snapshot.time = 7.3;
+  initial.snapshot.seed = 124;
+  fixture.replaceCatalogHeading();
+  const replacement = fixture.calls.journeys.at(-1);
+  assert.equal(initial.disposed, false);
+  assert.equal(replacement, initial);
+  assert.equal(replacement.snapshot.phase, 'orbit');
+  assert.equal(replacement.snapshot.time, 7.3);
+  assert.equal(replacement.snapshot.seed, 124);
 });

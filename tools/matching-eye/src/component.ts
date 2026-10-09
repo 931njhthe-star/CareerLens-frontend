@@ -3,6 +3,8 @@ import type { MatchingData, MatchingJob } from './data.ts';
 import { MatchingEyeRenderer } from './renderer.ts';
 import { componentStyles } from './styles.ts';
 export { mountAnalysisEye } from './analysis-component.ts';
+export { analysisViewport } from './analysis-projection.ts';
+export { eyeEntranceFrame } from './analysis-liquid.ts';
 export { ScorePyramidRenderer } from './score-pyramid.ts';
 
 const mounts = new WeakMap<HTMLElement, () => void>();

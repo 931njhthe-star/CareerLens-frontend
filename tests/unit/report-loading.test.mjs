@@ -1,5 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import {
+  finishPreparationPresentation,
+  withPresentationSignal,
+} from '../../src/features/analysis/preparation-transition.js';
 import {
   reportLoadingSnapshot,
   requestFinalReport,
@@ -330,4 +336,165 @@ test('cancellation during workspace refresh never applies either a late response
       assert.equal(applied, 0);
     });
   }
+});
+
+// Exercise the real modal controller with browser effects and module loading
+// replaced, so a slow renderer cannot accidentally delay or complete the API.
+const overlayController = readFileSync(
+  new URL('../../src/features/analysis/report-loading.js', import.meta.url),
+  'utf8',
+)
+  .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
+  .replace('export function createReportLoading', 'function createReportLoading')
+  .replace("import('./live-eye-motion.js')", 'loadEyeModule()');
+const nextTurn = () => new Promise(setImmediate);
+
+function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
+  const attrs = new Map();
+  const events = [];
+  const classes = new Set();
+  const host = { setAttribute: (key, value) => attrs.set(key, value), style: {} };
+  const button = { addEventListener: (type, callback) => (button[type] = callback) };
+  const dialog = {
+    style: {},
+    classList: { add: (name) => classes.add(name) },
+    querySelector: (selector) => (selector === 'button' ? button : host),
+    setAttribute() {},
+    addEventListener: (type, callback) => (dialog[type] = callback),
+    showModal: () => events.push('modal-open'),
+    focus() {},
+    close: () => events.push('modal-close'),
+    remove: () => events.push('modal-remove'),
+  };
+  const focused = {
+    isConnected: true,
+    focus: () => events.push('focus-restored'),
+  };
+  const document = {
+    body: { style: { overflow: 'auto' }, append() {} },
+    activeElement: focused,
+    createElement: () => dialog,
+  };
+  let mounted;
+  const module = {
+    mountLiveAnalysisEye(target, options) {
+      assert.equal(target, host);
+      mounted = options;
+      events.push('eye-mounted');
+      return {
+        complete: () => events.push('eye-complete'),
+        whenSettled: () => settled.promise,
+        dispose: () => events.push('eye-disposed'),
+      };
+    },
+  };
+  const context = vm.createContext({
+    AbortController,
+    document,
+    window: { matchMedia: () => ({ matches: false }) },
+    performance: { now: () => 0 },
+    loadEyeModule: () => graphics.promise,
+    withPresentationSignal,
+    finishPreparationPresentation: (options) =>
+      finishPreparationPresentation({ ...options, now: () => 4000 }),
+  });
+  vm.runInContext(overlayController, context);
+  const journey = { centerX: 640, centerY: 210, radius: 48, rotation: 3.25 };
+  const loading = context.createReportLoading({
+    draft: draft(),
+    journey,
+    onCancel: () => events.push('cancelled'),
+  });
+  return {
+    loading,
+    graphics,
+    settled,
+    module,
+    attrs,
+    events,
+    document,
+    dialog,
+    button,
+    journey,
+    mounted: () => mounted,
+  };
+}
+
+test('the real overlay starts analysis before graphics arrive and completes only after success and final drawing', async () => {
+  const fixture = overlayFixture();
+  const request = deferred();
+  let requested = false;
+  let returned = false;
+  const run = fixture.loading
+    .run(() => {
+      requested = true;
+      return request.promise;
+    })
+    .then((result) => {
+      returned = true;
+      return result;
+    });
+  assert.equal(requested, true);
+  assert.equal(fixture.events.includes('eye-mounted'), false);
+  fixture.graphics.resolve(fixture.module);
+  await nextTurn();
+  assert.equal(fixture.mounted().snapshot, fixture.journey);
+  fixture.mounted().onProgress(100);
+  assert.equal(fixture.attrs.get('aria-valuenow'), '99');
+  assert.equal(fixture.events.includes('eye-complete'), false);
+  request.resolve('validated-report');
+  await nextTurn();
+  assert.equal(fixture.events.includes('eye-complete'), true);
+  assert.equal(returned, false);
+  fixture.settled.resolve();
+  assert.equal(await run, 'validated-report');
+  assert.equal(fixture.attrs.get('aria-valuenow'), '100');
+  assert.equal(fixture.attrs.get('aria-busy'), 'false');
+  fixture.loading.dispose();
+});
+
+test('an API failure closes the modal and never completes the eye', async () => {
+  const fixture = overlayFixture();
+  fixture.graphics.resolve(fixture.module);
+  const request = deferred();
+  const failure = statusError(500);
+  const run = fixture.loading.run(() => request.promise);
+  const rejection = assert.rejects(run, (error) => error === failure);
+  await nextTurn();
+  request.reject(failure);
+  await rejection;
+  assert.equal(fixture.events.includes('eye-complete'), false);
+  assert.equal(fixture.events.includes('eye-disposed'), true);
+  assert.equal(fixture.events.includes('modal-remove'), true);
+  assert.equal(fixture.document.body.style.overflow, 'auto');
+});
+
+test('cancellation while the eye module loads aborts success and prevents a late mount', async () => {
+  const fixture = overlayFixture();
+  const run = fixture.loading.run(async () => 'validated-report');
+  const rejection = assert.rejects(run, { name: 'AbortError' });
+  await nextTurn();
+  fixture.button.click();
+  await rejection;
+  fixture.graphics.resolve(fixture.module);
+  await nextTurn();
+  assert.equal(fixture.events.includes('eye-mounted'), false);
+  assert.equal(fixture.events.includes('cancelled'), true);
+  assert.equal(fixture.events.includes('focus-restored'), true);
+  assert.equal(fixture.events.filter((event) => event === 'modal-remove').length, 1);
+});
+
+test('native Escape cancellation aborts a pending final animation and restores the page', async () => {
+  const fixture = overlayFixture();
+  fixture.graphics.resolve(fixture.module);
+  const run = fixture.loading.run(async () => 'validated-report');
+  const rejection = assert.rejects(run, { name: 'AbortError' });
+  await nextTurn();
+  let prevented = false;
+  fixture.dialog.cancel({ preventDefault: () => (prevented = true) });
+  await rejection;
+  assert.equal(prevented, true);
+  assert.equal(fixture.loading.signal.aborted, true);
+  assert.equal(fixture.events.includes('eye-disposed'), true);
+  assert.equal(fixture.document.body.style.overflow, 'auto');
 });

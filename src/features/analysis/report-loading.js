@@ -1,15 +1,10 @@
-import {
-  finishPreparationPresentation,
-  waitForPresentationDelay,
-  withPresentationSignal,
-} from './preparation-transition.js';
-import { reportLoadingSnapshot } from './report-state.js';
-import { analysisEyePalette, reportTransitionPalette } from '../../shared/design/selected-theme.js';
+import { finishPreparationPresentation, withPresentationSignal } from './preparation-transition.js';
+import { reportTransitionPalette } from '../../shared/design/selected-theme.js';
 import { playReportTransition } from '../../shared/motion/report-transition.js';
 
 // A native modal prevents changes while the selected posting is analyzed.
 // Explicit cancellation can return to that posting from any starting page.
-export function createReportLoading({ draft, onCancel }) {
+export function createReportLoading({ draft, onCancel, journey }) {
   const abort = new AbortController();
   const { signal } = abort;
   const dialog = document.createElement('dialog');
@@ -24,9 +19,15 @@ export function createReportLoading({ draft, onCancel }) {
         <p id="report-loading-description">
           ${draft.analysis_mode === 'job_posting' ? '이력서와 선택한 채용공고를 함께 살펴봅니다.' : '이력서와 희망 직무를 함께 살펴봅니다.'}
         </p>
+        <p class="report-loading-progress-note">진행률은 시각적 진행이며, 항목별 평가 결과가 아닙니다.</p>
       </div>
       <div
         class="report-loading-eye"
+        role="progressbar"
+        aria-label="보고서 분석 진행"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
         data-report-eye>
         <p
           class="report-loading-fallback"
@@ -49,6 +50,7 @@ export function createReportLoading({ draft, onCancel }) {
   let eye;
   let disposed = false;
   let startedAt;
+  let requestSucceeded = false;
   let analysisComplete = false;
   document.body.append(dialog);
   document.body.style.overflow = 'hidden';
@@ -90,34 +92,52 @@ export function createReportLoading({ draft, onCancel }) {
 
   async function run(request) {
     try {
-      // Fetch the module while the dimmer enters. API work starts after dimming;
-      // eye drawing and the gauge then start together with that work.
-      const modulePromise = import('./matching-eye.js').catch(() => null);
-      await waitForPresentationDelay(reduced ? 0 : 220, signal);
       signal.throwIfAborted();
       startedAt = performance.now();
-      const visual = modulePromise.then((module) => {
-        if (signal.aborted || !module) return;
-        try {
-          eye = module.mountAnalysisEye(host, reportLoadingSnapshot(draft), {
-            surface: 'overlay',
-            purpose: 'report',
-            palette: analysisEyePalette,
-          });
-        } catch {
-          host.textContent = '보고서를 작성하고 있습니다.';
-        }
-      });
+      // The fixed ring stays visible while the page clears to white behind it.
+      // Its brief entry hold ends before acceleration and the eye strokes begin.
+      // Graphics loading and drawing never hold up the actual analysis request.
+      const visual = import('./live-eye-motion.js')
+        .catch(() => null)
+        .then((module) => {
+          if (signal.aborted || !module) return;
+          try {
+            eye = module.mountLiveAnalysisEye(host, {
+              snapshot: journey,
+              onProgress(value) {
+                if (signal.aborted) return;
+                const percent = Math.min(
+                  requestSucceeded ? 100 : 99,
+                  Math.max(0, Math.round(value)),
+                );
+                host.setAttribute('aria-valuenow', String(percent));
+                host.setAttribute('aria-valuetext', `${percent}% · 시각적 진행률`);
+              },
+            });
+          } catch {
+            // Keep a readable fallback if graphics are unavailable.
+            if (!eye) host.textContent = '보고서를 작성하고 있습니다.';
+          }
+        });
       // Module loading cannot block the report request.
       host.setAttribute('aria-busy', 'true');
       const result = await request(signal);
       signal.throwIfAborted();
+      requestSucceeded = true;
       await withPresentationSignal(visual, signal);
       signal.throwIfAborted();
-      eye?.update(reportLoadingSnapshot(draft, true));
-      host.setAttribute('aria-busy', 'false');
+      eye?.complete();
       if (!eye) host.textContent = '보고서가 완성되었습니다. 결과를 엽니다.';
-      await finishPreparationPresentation({ eye, startedAt, signal, fold: false, onComplete() {} });
+      await finishPreparationPresentation({
+        eye: eye && { finish: () => eye.whenSettled() },
+        startedAt,
+        signal,
+        fold: false,
+        onComplete() {},
+      });
+      host.setAttribute('aria-valuenow', '100');
+      host.setAttribute('aria-valuetext', '100% · 보고서 분석 완료');
+      host.setAttribute('aria-busy', 'false');
       analysisComplete = true;
       return result;
     } catch (error) {
@@ -140,7 +160,7 @@ export function createReportLoading({ draft, onCancel }) {
     };
     // The completed eye remains in the modal top layer while the real result is
     // measured underneath. No screenshot, cloned report or synthetic report is used.
-    const source = host.querySelector('.cl-analysis-eye__scene') || host;
+    const source = eye?.scene || eye?.element || host;
     const bounds = dialog.getBoundingClientRect();
     const eyeBounds = source.getBoundingClientRect();
     const frameBounds = frame?.getBoundingClientRect();
