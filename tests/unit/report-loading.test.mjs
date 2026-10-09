@@ -125,6 +125,77 @@ test('successful final analysis posts submitted answers before accepting the ref
   assert.equal(source.answers.example, '이전 답변');
 });
 
+test('backend reports with a withheld total or an actual zero remain valid through final analysis', async () => {
+  for (const score of [null, 0]) {
+    const generated = {
+      ...report(),
+      source: 'backend',
+      score,
+      status: 'partial',
+      backend_report_text: '# 실제 보고서\n\n확인되지 않은 점수는 보류합니다.',
+    };
+    const updates = [];
+    const progress = { run: { id: 'synthetic-run', current_stage: 'reporting' } };
+    const result = await requestFinalReport({
+      draft: draft(),
+      answers: {},
+      signal: new AbortController().signal,
+      onProgress: (update) => updates.push(update),
+      request: async (path, options) => {
+        if (path === '/analysis') {
+          options.onProgress(progress);
+          return { report: generated };
+        }
+        return { draft: { ...draft(), report: generated } };
+      },
+    });
+    assert.equal(result.draft.report, generated);
+    assert.equal(result.draft.report.score, score);
+    assert.deepEqual(updates, [progress]);
+  }
+});
+
+test('nullable support remains specific to backend reports and never accepts invalid numeric totals', async () => {
+  for (const invalid of [
+    { ...report(), score: null },
+    ...[undefined, '0', NaN, Infinity, -1, 101].map((score) => ({
+      ...report(),
+      source: 'backend',
+      score,
+    })),
+  ]) {
+    const calls = [];
+    await assert.rejects(
+      requestFinalReport({
+        draft: draft(),
+        answers: {},
+        signal: new AbortController().signal,
+        request: async (path) => {
+          calls.push(path);
+          return { report: invalid };
+        },
+      }),
+      /보고서/,
+    );
+    assert.deepEqual(calls, ['/analysis']);
+  }
+});
+
+test('backend progress events describe work without unlocking a final report', () => {
+  const source = draft();
+  const running = reportLoadingSnapshot(source, false, {
+    run: { current_stage: 'reporting', progress_percent: 100, status: 'completed' },
+  });
+  assert.deepEqual(
+    running.stages.map((stage) => stage.status),
+    ['complete', 'complete', 'running'],
+  );
+  assert.equal(running.complete, false);
+  assert.deepEqual(running.insights, []);
+  const finished = reportLoadingSnapshot(source, true);
+  assert.ok(finished.stages.every((stage) => stage.status === 'complete'));
+});
+
 test('malformed final responses never unlock results or request a workspace refresh', async (t) => {
   const invalidReports = [
     undefined,
@@ -354,11 +425,17 @@ function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
   const events = [];
   const classes = new Set();
   const host = { setAttribute: (key, value) => attrs.set(key, value), style: {} };
+  const evaluationStatus = { textContent: '' };
   const button = { addEventListener: (type, callback) => (button[type] = callback) };
   const dialog = {
     style: {},
     classList: { add: (name) => classes.add(name) },
-    querySelector: (selector) => (selector === 'button' ? button : host),
+    querySelector: (selector) =>
+      selector === 'button'
+        ? button
+        : selector === '[data-evaluation-status]'
+          ? evaluationStatus
+          : host,
     setAttribute() {},
     addEventListener: (type, callback) => (dialog[type] = callback),
     showModal: () => events.push('modal-open'),
@@ -411,6 +488,7 @@ function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
     settled,
     module,
     attrs,
+    evaluationStatus,
     events,
     document,
     dialog,
@@ -497,4 +575,67 @@ test('native Escape cancellation aborts a pending final animation and restores t
   assert.equal(fixture.loading.signal.aborted, true);
   assert.equal(fixture.events.includes('eye-disposed'), true);
   assert.equal(fixture.document.body.style.overflow, 'auto');
+});
+
+test('server stage updates use safe copy and cannot complete or update a cancelled overlay', async () => {
+  const fixture = overlayFixture();
+  fixture.graphics.resolve(fixture.module);
+  const request = deferred();
+  let progress;
+  const run = fixture.loading.run((_signal, onProgress) => {
+    progress = onProgress;
+    return request.promise;
+  });
+  const rejection = assert.rejects(run, { name: 'AbortError' });
+  await nextTurn();
+  progress({ run: { current_stage: 'parsing' } });
+  assert.equal(fixture.evaluationStatus.textContent, '이력서와 공고 내용을 확인하고 있어요.');
+  progress({ run: { current_stage: '<img src=x onerror=alert(1)>', progress_percent: 100 } });
+  assert.equal(fixture.evaluationStatus.textContent, '분석을 진행하고 있어요.');
+  progress({ run: { current_stage: 'completed', progress_percent: 100 } });
+  assert.equal(fixture.events.includes('eye-complete'), false);
+  fixture.mounted().onProgress(100);
+  assert.equal(fixture.attrs.get('aria-valuenow'), '99');
+  fixture.button.click();
+  const statusAfterCancel = fixture.evaluationStatus.textContent;
+  progress({ run: { current_stage: 'reporting' } });
+  assert.equal(fixture.evaluationStatus.textContent, statusAfterCancel);
+  fixture.mounted().onProgress(12);
+  assert.equal(fixture.attrs.get('aria-valuenow'), '99');
+  request.resolve('late report');
+  await rejection;
+});
+
+test('navigation disposal aborts pending work and requests server cancellation only once', async () => {
+  const fixture = overlayFixture();
+  const request = deferred();
+  const run = fixture.loading.run(() => request.promise);
+  const rejection = assert.rejects(run, { name: 'AbortError' });
+  fixture.loading.dispose({ restoreFocus: false, cancelAnalysis: true });
+  fixture.loading.dispose({ cancelAnalysis: true });
+  fixture.button.click();
+  assert.equal(fixture.loading.signal.aborted, true);
+  assert.equal(fixture.events.filter((event) => event === 'cancelled').length, 1);
+  assert.equal(fixture.events.includes('focus-restored'), false);
+  assert.equal(fixture.events.filter((event) => event === 'modal-remove').length, 1);
+  request.resolve('late report');
+  await rejection;
+});
+
+test('success disposal and failure cleanup do not send a redundant server cancellation', async () => {
+  const completed = overlayFixture();
+  completed.graphics.resolve(completed.module);
+  completed.settled.resolve();
+  await completed.loading.run(async () => 'validated report');
+  completed.loading.dispose({ cancelAnalysis: true });
+  assert.equal(completed.events.includes('cancelled'), false);
+  const failed = overlayFixture();
+  await assert.rejects(
+    failed.loading.run(async () => {
+      throw statusError(500);
+    }),
+    /request failed/,
+  );
+  failed.loading.dispose({ cancelAnalysis: true });
+  assert.equal(failed.events.includes('cancelled'), false);
 });

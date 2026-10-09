@@ -121,7 +121,7 @@ function stopReportVisuals({ preserveLoading, preserveJourney = false } = {}) {
   disposeReportGate?.();
   disposeReportGate = undefined;
   if (disposeReportLoading !== preserveLoading?.dispose) {
-    disposeReportLoading?.();
+    disposeReportLoading?.({ cancelAnalysis: true });
     disposeReportLoading = undefined;
   }
   delete app.dataset.reportTransition;
@@ -171,10 +171,37 @@ async function selectPosting(posting) {
     navigate('resume');
     return;
   }
+  if (!member && session.capabilities?.guest_analysis === false) {
+    const guestRevision = viewRevision;
+    const selection = await api(`/guest/job-postings/${encodeURIComponent(posting.id)}/select`, {
+      method: 'POST',
+      body: {},
+    });
+    if (guestRevision !== viewRevision || session.user) return;
+    applyGuestWorkspace(selection);
+    requireLogin('desired-role');
+    return;
+  }
 
   let revision = viewRevision;
   const owner = session.user?.id;
   const answers = {};
+  let evaluationRunId;
+  let cancellationRequested = false;
+  let cancellationSent = false;
+  function cancelEvaluation() {
+    cancellationRequested = true;
+    if (!evaluationRunId || cancellationSent || !member) return;
+    cancellationSent = true;
+    void api(`/evaluations/${encodeURIComponent(evaluationRunId)}/cancel`, {
+      method: 'POST',
+      body: {},
+      keepalive: true,
+    }).catch((error) => {
+      if (error.status !== 409 && owner === session.user?.id)
+        notice(`평가 취소 요청에 실패했습니다: ${error.message}`, 'error');
+    });
+  }
   const loading = createReportLoading({
     journey: journeyMotion?.capture(),
     draft: {
@@ -184,13 +211,14 @@ async function selectPosting(posting) {
       role: posting.role,
     },
     onCancel() {
+      cancelEvaluation();
       if (revision === viewRevision && owner === session.user?.id)
         navigate(`jobs/${encodeURIComponent(posting.id)}`);
     },
   });
   disposeReportLoading = loading.dispose;
   try {
-    const result = await loading.run(async (signal) => {
+    const result = await loading.run(async (signal, onProgress) => {
       const selection = await api(
         `${member ? '' : '/guest'}/job-postings/${encodeURIComponent(posting.id)}/select`,
         { method: 'POST', body: {}, signal },
@@ -203,7 +231,17 @@ async function selectPosting(posting) {
       selectedPosting = null;
       delete edits.answers;
       return member
-        ? requestFinalReport({ draft: workspace.draft, answers, signal, request: api })
+        ? requestFinalReport({
+            draft: workspace.draft,
+            answers,
+            signal,
+            request: api,
+            onProgress(update) {
+              if (update.run?.id) evaluationRunId = update.run.id;
+              if (cancellationRequested) cancelEvaluation();
+              onProgress(update);
+            },
+          })
         : requestGuestReport({ answers, signal, request: api });
     });
     if (loading.signal.aborted || revision !== viewRevision || owner !== session.user?.id) return;
@@ -290,7 +328,8 @@ async function claimCompletedGuest() {
       '임시 분석 자료가 만료되어 결과를 연결하지 못했습니다. 이력서를 다시 첨부해 주세요.';
     return 'expired';
   }
-  if (!temporary.completed) return false;
+  const stagedResume = session.backend_adapter && temporary.draft?.resume_attached;
+  if (!temporary.completed && !stagedResume) return false;
   try {
     applyWorkspace(await api('/guest/claim', { method: 'POST', body: {} }));
   } catch (error) {
@@ -303,7 +342,7 @@ async function claimCompletedGuest() {
   guest.filename = '';
   guest.target = null;
   selectedPosting = null;
-  return 'claimed';
+  return temporary.completed ? 'claimed' : 'prepared';
 }
 
 function openReportLogin(page) {
@@ -336,11 +375,13 @@ async function onSession(nextSession) {
     return;
   }
   const claimed = await claimCompletedGuest();
-  if (claimed !== 'claimed') await loadWorkspace();
+  if (!['claimed', 'prepared'].includes(claimed)) await loadWorkspace();
   const destination = claimed
     ? claimed === 'expired'
       ? 'resume'
-      : 'result'
+      : claimed === 'prepared'
+        ? practiceDestination(workspace.draft)
+        : 'result'
     : returnAfterLogin || (workspace.draft.report ? 'result' : 'resume');
   returnAfterLogin = null;
   navigate(destination);
@@ -484,7 +525,10 @@ function render({ reportBridge } = {}) {
       locked
         ? reportGatePage({ expires_at: draft.expires_at })
         : !session.user && page === 'resume'
-          ? guestResumePage(draft)
+          ? guestResumePage({
+              ...draft,
+              loginBeforeAnalysis: session.capabilities?.guest_analysis === false,
+            })
           : workspacePage(page, draft),
       { user: session.user, draft: workspace.draft, page },
     );
@@ -927,12 +971,12 @@ async function start() {
     session = await getSession();
     if (session.user) {
       const claimed = await claimCompletedGuest();
-      if (claimed !== 'claimed') await loadWorkspace();
+      if (!['claimed', 'prepared'].includes(claimed)) await loadWorkspace();
       if (claimed)
         history.replaceState(
           {},
           '',
-          `${location.pathname}#/${claimed === 'expired' ? 'resume' : 'result'}`,
+          `${location.pathname}#/${claimed === 'expired' ? 'resume' : claimed === 'prepared' ? practiceDestination(workspace.draft) : 'result'}`,
         );
     } else applyGuestWorkspace(await api('/guest/workspace'));
     render();

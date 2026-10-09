@@ -122,7 +122,7 @@ function renderSocialLogin(session) {
   `;
 }
 
-function renderCredentialsForm(page) {
+function renderCredentialsForm(page, session) {
   const emailField = renderEmailField();
   const passwordField = renderPasswordField(page);
   return `
@@ -148,7 +148,7 @@ function renderCredentialsForm(page) {
       ${emailField}
       ${passwordField}
       ${
-        page === 'email'
+        page === 'email' && session.capabilities?.password_reset !== false
           ? `
             <div class="forgot-link">
               <a href="#/forgot">비밀번호를 잊으셨나요?</a>
@@ -230,12 +230,16 @@ function renderResetPassword(page) {
 }
 
 function renderAuthForm(page, session) {
+  if (['forgot', 'reset'].includes(page) && session.capabilities?.password_reset === false)
+    return '<p>현재 서비스에서는 비밀번호 재설정을 지원하지 않습니다. 계정 관리자에게 문의해 주세요.</p><a class="button" href="#/email">로그인으로 돌아가기</a>';
   switch (page) {
     case 'login':
-      return renderSocialLogin(session);
+      return session.backend_adapter
+        ? renderCredentialsForm('email', session)
+        : renderSocialLogin(session);
     case 'email':
     case 'signup':
-      return renderCredentialsForm(page);
+      return renderCredentialsForm(page, session);
     case 'forgot':
       return renderForgotPassword(session);
     default:
@@ -342,6 +346,18 @@ export function bindAuth({ onSession, resetToken, navigate }) {
     await pending(form, '처리하는 중…', async () => {
       try {
         const result = await api(`/auth/${action}`, { method: 'POST', body });
+        if (
+          action === 'register' &&
+          Object.hasOwn(result, 'access_token') &&
+          !result.access_token
+        ) {
+          notice(
+            '가입한 이메일의 인증 안내를 확인한 뒤 로그인해 주세요.',
+            'info',
+            document.getElementById('auth-notices'),
+          );
+          return;
+        }
         if (['login', 'register'].includes(action)) {
           setSession(result);
           await onSession(await getSession());

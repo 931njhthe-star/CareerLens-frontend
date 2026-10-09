@@ -1,6 +1,7 @@
 """Serve the independent frontend and proxy its same-origin API to Python."""
 
 from pathlib import Path
+from io import BytesIO
 import argparse
 import ipaddress
 import os
@@ -9,10 +10,60 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Request as FlaskRequest, Response, jsonify, request, send_from_directory
 from waitress import serve
+from resume_conversion import MAX_UPLOAD_BYTES, extract_resume
 
 ROOT = Path(__file__).resolve().parent
+
+
+class InMemoryUploadRequest(FlaskRequest):
+    """Keep accepted upload bodies in memory, including multipart file parts."""
+
+    def _get_file_stream(
+        self, total_content_length, content_type, filename=None, content_length=None
+    ):
+        return BytesIO()
+
+
+def career_postings_directory():
+    configured = os.environ.get("CAREERLENS_JOB_POSTINGS_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return ROOT.parent / "CareerLens-backend" / "app" / "modules" / "job_postings"
+
+
+def load_career_markdown(directory):
+    """Expose only the configured repository's numbered fictional posting fixtures."""
+    if not directory.is_dir():
+        raise FileNotFoundError("Job posting directory does not exist.")
+    files = sorted(
+        (
+            path
+            for path in directory.glob("*.md")
+            if path.is_file()
+            and not path.is_symlink()
+            and path.stem.isascii()
+            and path.stem.isdigit()
+        ),
+        key=lambda path: int(path.stem),
+    )
+    if not files:
+        raise ValueError("No numbered Markdown job postings were found.")
+    items, total_size = [], 0
+    for path in files:
+        size = path.stat().st_size
+        total_size += size
+        if size > 1024 * 1024 or total_size > 10 * 1024 * 1024:
+            raise ValueError("Job posting Markdown size limit exceeded.")
+        items.append(
+            {
+                "id": path.stem,
+                "filename": path.name,
+                "content": path.read_text(encoding="utf-8-sig"),
+            }
+        )
+    return {"items": items}
 
 
 def load_local_env(path):
@@ -114,6 +165,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def create_app(backend_url=None):
     app = Flask(__name__, static_folder=None)
+    app.request_class = InMemoryUploadRequest
     app.config.update(
         MAX_CONTENT_LENGTH=11 * 1024 * 1024, TRUSTED_HOSTS=["127.0.0.1", "localhost", "[::1]"]
     )
@@ -141,6 +193,49 @@ def create_app(backend_url=None):
     @app.get("/health")
     def health():
         return jsonify(status="ok", service="careerlens-frontend", backend_configured=bool(origin))
+
+    @app.get("/api/v1/local-data/career-markdown")
+    def career_markdown():
+        try:
+            return jsonify(load_career_markdown(career_postings_directory()))
+        except (OSError, UnicodeError, ValueError):
+            return (
+                jsonify(
+                    error={
+                        "code": "career_markdown_unavailable",
+                        "message": "직무 Markdown 원본을 읽지 못했습니다. CAREERLENS_JOB_POSTINGS_DIR 설정과 UTF-8 Markdown 파일을 확인해 주세요.",
+                    }
+                ),
+                503,
+            )
+
+    @app.post("/api/v1/local-data/convert-resume")
+    def convert_resume():
+        upload = request.files.get("file")
+        if upload is None or not upload.filename:
+            return (
+                jsonify(error={"code": "file_required", "message": "이력서 파일을 선택해 주세요."}),
+                400,
+            )
+        filename = Path(upload.filename.replace("\\", "/")).name
+        if Path(filename).suffix.lower() not in {".pdf", ".docx", ".txt", ".md"}:
+            return (
+                jsonify(
+                    error={
+                        "code": "unsupported_file",
+                        "message": "PDF, DOCX, TXT, MD 파일을 선택해 주세요.",
+                    }
+                ),
+                415,
+            )
+        data = upload.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            return too_large(None)
+        try:
+            text = extract_resume(filename, data)
+        except ValueError as error:
+            return jsonify(error={"code": "invalid_resume", "message": str(error)}), 400
+        return jsonify(filename=Path(filename).stem[:180] + ".md", text=text)
 
     @app.get("/favicon.svg")
     def favicon():
@@ -177,7 +272,16 @@ def create_app(backend_url=None):
         if request.query_string:
             target += "?" + request.query_string.decode("ascii")
         # urllib creates Host from the target API origin (essential for HTTPS virtual hosts).
-        allowed = {"content-type", "cookie", "x-csrf-token", "origin", "accept"}
+        allowed = {
+            "content-type",
+            "cookie",
+            "x-csrf-token",
+            "origin",
+            "accept",
+            "authorization",
+            "idempotency-key",
+            "last-event-id",
+        }
         headers = {key: value for key, value in request.headers if key.lower() in allowed}
         payload = request.get_data() if request.method not in {"GET", "HEAD"} else None
         upstream_request = Request(target, data=payload, headers=headers, method=request.method)

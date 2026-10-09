@@ -1,19 +1,22 @@
-// Only the final analysis response completes the loading presentation.
-export function reportLoadingSnapshot(draft, complete = false) {
-  const status = complete ? 'complete' : 'running';
+// Only persisted backend work completes the stages in the loading presentation.
+export function reportLoadingSnapshot(draft, complete = false, update = null) {
+  const stage = update?.run?.current_stage;
+  const evaluationStarted = ['criterion', 'validation', 'reporting', 'completed'].includes(stage);
+  const reportingStarted = ['reporting', 'completed'].includes(stage);
+  const status = (done) => (complete || done ? 'complete' : 'running');
   return {
     stages: [
       {
         id: 'resume',
         label: '이력서 확인',
-        status,
+        status: status(evaluationStarted),
         detail: '이력서에 담긴 경험과 성과를 살펴봅니다.',
       },
       {
         id: 'role',
         label:
           draft.analysis_mode === 'job_posting' ? '선택한 공고 기준 분석' : '희망 직무 기준 분석',
-        status,
+        status: status(reportingStarted),
         detail:
           draft.analysis_mode === 'job_posting'
             ? `${draft.company || '선택한 기업'} ${draft.role || ''} 공고의 요구사항과 경험을 비교합니다.`
@@ -22,7 +25,7 @@ export function reportLoadingSnapshot(draft, complete = false) {
       {
         id: 'report',
         label: '최종 보고서 작성',
-        status,
+        status: status(complete),
         detail: '경험에 대한 요약과 보완할 부분을 정리합니다.',
       },
     ],
@@ -38,9 +41,10 @@ function validReport(report) {
   const text = (value) => typeof value === 'string';
   if (
     !record(report) ||
-    !Number.isFinite(report.score) ||
-    report.score < 0 ||
-    report.score > 100 ||
+    !(report.source === 'backend'
+      ? report.score === null ||
+        (Number.isFinite(report.score) && report.score >= 0 && report.score <= 100)
+      : Number.isFinite(report.score) && report.score >= 0 && report.score <= 100) ||
     !text(report.summary) ||
     !text(report.verdict)
   )
@@ -66,11 +70,11 @@ function validReport(report) {
   );
 }
 
-export async function requestFinalReport({ draft, answers, signal, request }) {
+export async function requestFinalReport({ draft, answers, signal, request, onProgress }) {
   signal.throwIfAborted();
   let result;
   try {
-    result = await request('/analysis', { method: 'POST', body: { answers }, signal });
+    result = await request('/analysis', { method: 'POST', body: { answers }, signal, onProgress });
   } catch (error) {
     signal.throwIfAborted();
     throw error;

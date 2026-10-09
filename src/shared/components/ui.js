@@ -174,6 +174,7 @@ export function renderPrimaryNav(page = '', draft = {}) {
 function renderAccountMenu(user) {
   return user
     ? `
+        ${user.demo ? '<span class="badge">시연 계정</span>' : ''}
         <span class="account-name">${escapeHtml(user.name)} 님</span>
         <button
           type="button"
@@ -205,6 +206,7 @@ export function shell(content, { user, draft = {}, page = 'resume' } = {}) {
       <div class="account-menu">${renderAccountMenu(user)}</div>
     </header>
     <div class="app-shell">
+      ${user?.demo ? '<p class="notice info" role="status">화면 체험용 계정입니다. 입력한 이력서와 결과는 이 탭에만 저장되며 백엔드에 전송되지 않습니다.</p>' : ''}
       ${['resume', 'desired-role', 'job', 'opportunities', 'practice', 'questions', 'result', 'preparing'].includes(page) ? renderWorkflowSteps(draft, page) : ''}
       <div
         id="notices"

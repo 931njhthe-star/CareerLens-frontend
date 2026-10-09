@@ -20,6 +20,7 @@ export function createReportLoading({ draft, onCancel, journey }) {
           ${draft.analysis_mode === 'job_posting' ? '이력서와 선택한 채용공고를 함께 살펴봅니다.' : '이력서와 희망 직무를 함께 살펴봅니다.'}
         </p>
         <p class="report-loading-progress-note">진행률은 시각적 진행이며, 항목별 평가 결과가 아닙니다.</p>
+        <p data-evaluation-status role="status" aria-live="polite"></p>
       </div>
       <div
         class="report-loading-eye"
@@ -43,6 +44,7 @@ export function createReportLoading({ draft, onCancel, journey }) {
     </div>
   `;
   const host = dialog.querySelector('[data-report-eye]');
+  const evaluationStatus = dialog.querySelector('[data-evaluation-status]');
   const back = dialog.querySelector('button');
   const focused = document.activeElement;
   const scrollOverflow = document.body.style.overflow;
@@ -57,10 +59,11 @@ export function createReportLoading({ draft, onCancel, journey }) {
   dialog.showModal();
   dialog.focus();
 
-  function dispose({ restoreFocus = true } = {}) {
+  function dispose({ restoreFocus = true, cancelAnalysis = false } = {}) {
     if (disposed) return;
     disposed = true;
     abort.abort();
+    if (cancelAnalysis && !requestSucceeded) onCancel?.();
     eye?.dispose();
     dialog.close();
     dialog.remove();
@@ -77,8 +80,23 @@ export function createReportLoading({ draft, onCancel, journey }) {
   }
   function cancel() {
     if (disposed) return;
-    dispose();
-    onCancel?.();
+    const succeeded = requestSucceeded;
+    dispose({ cancelAnalysis: true });
+    if (succeeded) onCancel?.();
+  }
+  function updateProgress(update) {
+    if (signal.aborted || !evaluationStatus) return;
+    const labels = {
+      queued: '분석 순서를 기다리고 있어요.',
+      parsing: '이력서와 공고 내용을 확인하고 있어요.',
+      indexing: '경험과 연결되는 근거를 찾고 있어요.',
+      evaluation: '항목별 경험과 역량을 살펴보고 있어요.',
+      criterion: '항목별 경험과 역량을 살펴보고 있어요.',
+      validation: '평가 근거를 다시 확인하고 있어요.',
+      reporting: '분석 내용을 보고서로 정리하고 있어요.',
+      completed: '보고서가 준비됐어요.',
+    };
+    evaluationStatus.textContent = labels[update?.run?.current_stage] || '분석을 진행하고 있어요.';
   }
   back.addEventListener('click', cancel, { signal });
   dialog.addEventListener(
@@ -121,7 +139,7 @@ export function createReportLoading({ draft, onCancel, journey }) {
         });
       // Module loading cannot block the report request.
       host.setAttribute('aria-busy', 'true');
-      const result = await request(signal);
+      const result = await request(signal, updateProgress);
       signal.throwIfAborted();
       requestSucceeded = true;
       await withPresentationSignal(visual, signal);
