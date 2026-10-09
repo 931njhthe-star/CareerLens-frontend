@@ -66,14 +66,19 @@ export class LiveAnalysisClock {
   }
 }
 
-/** A bounded 3D eye canvas. The accessible percentage remains outside its Y-axis turn. */
+/** Flat eye and wordmark faces share one Y-axis turn; progress stays outside both. */
 export function mountLiveAnalysisEye(host, { onProgress } = {}) {
   const element = document.createElement('div');
   element.className = 'live-analysis-motion';
   const canvas = document.createElement('canvas');
   canvas.className = 'live-analysis-scene';
   canvas.setAttribute('aria-hidden', 'true');
-  element.append(canvas);
+  const wordmark = document.createElement('div');
+  wordmark.className = 'live-analysis-wordmark';
+  wordmark.setAttribute('aria-hidden', 'true');
+  wordmark.innerHTML = '<span>Career <b>Lens</b></span>';
+  wordmark.style.visibility = 'hidden';
+  element.append(canvas, wordmark);
   host.replaceChildren(element);
   const context = canvas.getContext('2d');
   if (!context) {
@@ -107,11 +112,17 @@ export function mountLiveAnalysisEye(host, { onProgress } = {}) {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawPupilFrame(context, size, frame);
+      wordmark.style.visibility = frame.face === 'logo' ? 'visible' : 'hidden';
+      wordmark.style.transform = `perspective(${size * 2.5}px) rotateY(${frame.logoYaw}rad)`;
+      wordmark.style.opacity = String(
+        (0.84 + frame.logoGlow * 0.16) * smooth(Math.abs(Math.cos(frame.eyeYaw)) / 0.04),
+      );
     }
     element.dataset.percent = String(loading.percent);
     element.dataset.loading = String(loading.active);
     element.dataset.rotation = String(frame.rotation);
     element.dataset.eyeYaw = String(frame.eyeYaw);
+    element.dataset.face = frame.face;
     element.dataset.outline = String(frame.outline);
     element.dataset.stage = frame.scale < 1 ? 'entry' : 'analysis';
     if (lastPercent !== loading.percent) {
@@ -122,6 +133,7 @@ export function mountLiveAnalysisEye(host, { onProgress } = {}) {
   function resize() {
     if (disposed) return;
     size = Math.max(120, Math.min(520, element.clientWidth || 320));
+    wordmark.style.fontSize = `${size * 0.108}px`;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.round(size * dpr);
     canvas.height = Math.round(size * dpr);

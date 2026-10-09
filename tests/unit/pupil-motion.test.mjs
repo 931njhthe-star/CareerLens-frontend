@@ -12,6 +12,10 @@ import {
   pupilMotionFrame,
 } from '../../src/features/analysis/pupil-motion.js';
 
+const frameAtYaw = (yaw) => pupilMotionFrame(
+  EYE_DRAW_DELAY_MS + EYE_DRAW_MS + (yaw / (2 * Math.PI)) * EYE_YAW_MS,
+);
+
 test('the upper outline draws left to right and the lower outline draws right to left', () => {
   const upperStart = eyeContourPoint(0);
   const upperEnd = eyeContourPoint(1);
@@ -60,13 +64,14 @@ test('the eye finishes its outline before beginning a slower, continuous rightwa
 
 test('Y-axis projection faces forward at zero and foreshortens at a quarter turn', () => {
   const point = { x: 0.35, y: -0.18 };
-  assert.deepEqual(projectEyePoint(point, 0), { ...point, z: 0, scale: 1 });
+  const front = projectEyePoint(point, 0);
+  assert.deepEqual({ ...front, z: Math.abs(front.z) }, { ...point, z: 0, scale: 1 });
   const side = projectEyePoint(point, Math.PI / 2);
   assert.ok(Math.abs(side.x) < 1e-12);
   assert.ok(side.y < 0, 'the upper edge stays above the horizontal axis');
   assert.ok(Math.abs(side.y) < Math.abs(point.y), 'the far side is smaller in perspective');
-  const core = projectEyePoint({ x: 0, y: 0, z: 0.075 }, Math.PI / 2);
-  assert.ok(core.x > 0, 'the raised core turns toward the right');
+  const core = projectEyePoint({ x: 0, y: 0 }, Math.PI / 2);
+  assert.equal(core.x, 0, 'the coplanar core stays centered without protruding');
   assert.equal(core.y, 0);
 });
 
@@ -83,8 +88,37 @@ test('Y-axis rotation preserves the eye corners on the horizon and exposes near/
   assert.ok(near.scale > 1 && far.scale < 1);
   assert.ok(Math.abs(near.x) > Math.abs(far.x));
   assert.ok(near.y > far.y);
-  const raised = projectEyePoint({ x: 0.1, y: 0.1, z: 0.075 }, 0);
-  assert.ok(raised.scale > 1 && raised.x > 0.1 && raised.y > 0.1);
+});
+
+test('a continuous turn alternates the eye and readable logo at their edge-on boundaries', () => {
+  const epsilon = 0.001;
+  for (const revolution of [0, 1, 3]) {
+    const turn = revolution * Math.PI * 2;
+    const front = frameAtYaw(turn);
+    const back = frameAtYaw(turn + Math.PI);
+    assert.equal(front.face, 'eye');
+    assert.equal(frameAtYaw(turn + Math.PI / 2 - epsilon).face, 'eye');
+    assert.equal(frameAtYaw(turn + Math.PI / 2 + epsilon).face, 'logo');
+    assert.equal(back.face, 'logo');
+    assert.ok(Math.abs(Math.atan2(Math.sin(back.logoYaw), Math.cos(back.logoYaw))) < 1e-10,
+      'the front of the text faces the viewer at 180 degrees');
+    assert.equal(frameAtYaw(turn + 3 * Math.PI / 2 - epsilon).face, 'logo');
+    assert.equal(frameAtYaw(turn + 3 * Math.PI / 2 + epsilon).face, 'eye');
+    assert.equal(frameAtYaw(turn + Math.PI * 2).face, 'eye');
+    let previous = -Infinity;
+    for (let step = 1; step < 20; step++) {
+      const yaw = turn + Math.PI / 2 + (step / 20) * Math.PI;
+      const frame = frameAtYaw(yaw);
+      assert.equal(frame.face, 'logo');
+      assert.ok(frame.logoYaw > previous, 'the logo keeps turning in the same direction');
+      assert.ok(Math.cos(frame.logoYaw) > 0, 'visible text never turns its mirrored back to the viewer');
+      previous = frame.logoYaw;
+    }
+  }
+  const before = frameAtYaw(2 * Math.PI - epsilon);
+  const after = frameAtYaw(2 * Math.PI + epsilon);
+  assert.equal(before.face, after.face);
+  assert.ok(Math.abs(after.eyeYaw - before.eyeYaw - 2 * epsilon) < 1e-10);
 });
 
 test('the pupil grows from nothing, reaches full size, then turns clockwise without wrapping', () => {
@@ -142,6 +176,18 @@ test('outer and reactor rings advance in one direction with a slower reactor and
   }
 });
 
+test('the wordmark light breathes continuously within a bounded range', () => {
+  const lights = [];
+  for (let elapsed = PUPIL_ENTRY_MS; elapsed < 20000; elapsed += 100) {
+    const frame = pupilMotionFrame(elapsed);
+    const next = pupilMotionFrame(elapsed + 1);
+    assert.ok(frame.logoGlow >= 0 && frame.logoGlow <= 1);
+    assert.ok(Math.abs(next.logoGlow - frame.logoGlow) < 0.01);
+    lights.push(frame.logoGlow);
+  }
+  assert.ok(Math.max(...lights) - Math.min(...lights) > 0.25, 'the light changes instead of remaining a static label');
+});
+
 test('reduced motion renders a complete static pupil for any duration', () => {
   const staticFrame = pupilMotionFrame(0, { reduced: true });
   assert.equal(staticFrame.scale, 1);
@@ -159,6 +205,7 @@ function recordingContext() {
   const stack = [];
   const strokes = [];
   const fills = [];
+  const clears = [];
   const point = (x, y) => ({
     x: matrix[0] * x + matrix[2] * y + matrix[4],
     y: matrix[1] * x + matrix[3] * y + matrix[5],
@@ -182,6 +229,9 @@ function recordingContext() {
   });
   const context = new Proxy(
     {
+      clearRect(...rect) {
+        clears.push(rect);
+      },
       save() {
         stack.push({
           matrix: [...matrix],
@@ -239,14 +289,14 @@ function recordingContext() {
     },
     { get: (target, name) => target[name] ?? (() => {}) },
   );
-  return { context, strokes, fills };
+  return { context, strokes, fills, clears };
 }
 
 test('the painter projects the lids around the vertical axis without banking their corners', () => {
   const { context, strokes } = recordingContext();
   const size = 360;
   const yaw = Math.PI / 3;
-  drawPupilFrame(context, size, { ...pupilMotionFrame(12000), eyeYaw: yaw });
+  drawPupilFrame(context, size, frameAtYaw(yaw));
   const corners = strokes.flatMap(({ points }) => [points[0], points.at(-1)]);
   for (const progress of [0, 1]) {
     const expected = projectEyePoint(eyeContourPoint(progress), yaw);
@@ -261,6 +311,30 @@ test('the painter projects the lids around the vertical axis without banking the
   }
 });
 
+test('the flat eye, rings and glow share a single edge-on plane with no raised pupil', () => {
+  const { context, strokes, fills } = recordingContext();
+  const size = 360;
+  drawPupilFrame(context, size, frameAtYaw(Math.PI / 2));
+  const points = [...strokes, ...fills].flatMap((path) => path.points);
+  assert.ok(points.length > 0);
+  for (const { x, y } of points) {
+    assert.ok(Number.isFinite(x) && Number.isFinite(y));
+    assert.ok(Math.abs(x - size / 2) < 1e-8, 'all eye geometry collapses onto the same centerline');
+  }
+});
+
+test('logo frames clear the prior eye drawing without painting a mirrored eye behind the text', () => {
+  const { context, strokes, fills, clears } = recordingContext();
+  const size = 360;
+  drawPupilFrame(context, size, frameAtYaw(0));
+  assert.ok(strokes.length > 0 && fills.length > 0);
+  const painted = [strokes.length, fills.length];
+  drawPupilFrame(context, size, frameAtYaw(Math.PI));
+  assert.deepEqual([strokes.length, fills.length], painted);
+  assert.deepEqual(clears.at(-1), [0, 0, size, size]);
+  assert.equal(clears.length, 2);
+});
+
 test('all painted contours, rings and glow stay within the canvas over a full yaw revolution', () => {
   const size = 360;
   for (let step = 0; step <= 48; step++) {
@@ -268,6 +342,10 @@ test('all painted contours, rings and glow stay within the canvas over a full ya
     const frame = pupilMotionFrame(EYE_DRAW_DELAY_MS + EYE_DRAW_MS + (step / 48) * EYE_YAW_MS);
     drawPupilFrame(context, size, frame);
     const points = [...strokes, ...fills].flatMap((path) => path.points);
+    if (frame.face === 'logo') {
+      assert.equal(points.length, 0);
+      continue;
+    }
     assert.ok(points.length > 0);
     for (const { x, y } of points) {
       assert.ok(Number.isFinite(x) && Number.isFinite(y));
@@ -282,7 +360,7 @@ test('all painted contours, rings and glow stay within the canvas over a full ya
 test('the glowing center is filled softly without a stroked circular border', () => {
   const { context, strokes, fills } = recordingContext();
   const size = 360;
-  drawPupilFrame(context, size, { ...pupilMotionFrame(12000), eyeYaw: 0 });
+  drawPupilFrame(context, size, frameAtYaw(0));
   const inCore = ({ points }) =>
     points.length > 0 &&
     points.every(({ x, y }) => Math.hypot(x - size / 2, y - size / 2) < size * 0.064);
