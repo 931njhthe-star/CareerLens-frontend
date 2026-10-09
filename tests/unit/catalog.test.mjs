@@ -64,7 +64,7 @@ test('selecting a posting protects saved and unsaved job content and preserves u
 test('catalog filters survive route round trips, Unicode and pagination', () => {
   const query = catalogQuery(
     new URLSearchParams(
-      'q=Python+%26+SQL&location=서울&skill=C%2B%2B&saved=1&page=2&irrelevant=secret',
+      'q=Python+%26+SQL&role_category=데이터+분석&location=서울&skill=C%2B%2B&saved=1&page=2&irrelevant=secret',
     ),
   );
   const route = catalogRoute(`#/jobs?${query}`);
@@ -72,6 +72,7 @@ test('catalog filters survive route round trips, Unicode and pagination', () => 
   assert.equal(route.query.get('q'), 'Python & SQL');
   assert.equal(route.query.get('skill'), 'C++');
   assert.equal(route.query.get('location'), '서울');
+  assert.equal(route.query.get('role_category'), '데이터 분석');
   assert.equal(route.query.get('page'), '2');
   assert.equal(route.query.has('irrelevant'), false);
   for (const page of ['-1', 'NaN', '1.5'])
@@ -115,11 +116,24 @@ test('job pages render untrusted API values as text and reject executable source
   assert.equal(safeSourceUrl('https://example.com/jobs'), 'https://example.com/jobs');
 });
 
+test('catalog offers actual role categories and retains an empty selected category for recovery', () => {
+  const html = jobListPage(
+    { items: [], total: 0, page: 1, page_size: 12, filters: { roles: ['데이터 분석', '서비스 기획'] } },
+    new URLSearchParams({ role_category: '데이터 분석' }),
+    null,
+  );
+  assert.match(html, /label for="filter-role_category">직무 분류/);
+  assert.match(html, /value="데이터 분석"\s+selected/);
+  assert.match(html, /value="서비스 기획"/);
+  assert.match(html, /조건에 맞는 공고가 없어요/);
+  assert.match(html, /전체 공고 보기/);
+});
+
 test('public catalogue offers login, real-source disclaimers and owner-only editing', () => {
   const publicShell = shell('jobs', { page: 'jobs' });
   assert.ok(publicShell.includes('href="#/email"'));
   assert.equal(publicShell.includes('id="logout"'), false);
-  assert.equal(publicShell.includes('class="steps"'), false);
+  assert.equal(publicShell.includes('class="steps"'), true);
   const example = jobDetailPage(
     { ...posting, source_url: 'https://example.com/real-role' },
     { id: 'owner' },

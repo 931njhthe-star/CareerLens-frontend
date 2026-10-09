@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { pupilMotionFrame } from '../../src/features/analysis/pupil-motion.js';
 import {
   LiveAnalysisClock,
-  ANALYSIS_ENTRY_MS,
-  liveAnalysisViewport,
-  liveEyeChoreography,
   liveMotionViewport,
 } from '../../src/features/analysis/live-eye-motion.js';
 
-test('workflow and modal use one viewport geometry independent of document scroll or content', () => {
+test('historical journey previews retain their independent viewport geometry', () => {
   for (const [w, h] of [
     [1440, 1000],
     [390, 844],
@@ -24,55 +24,6 @@ test('workflow and modal use one viewport geometry independent of document scrol
     assert.ok(a.centerX - a.radius > 0 && a.centerX + a.radius < w);
     assert.ok(a.centerY - a.radius > 0 && a.centerY + a.radius < h);
   }
-});
-
-test('the analysis modal preserves a captured pupil and recomputes it only after a viewport resize', () => {
-  const frame = {
-    ...liveMotionViewport(1440, 1000),
-    centerX: 681,
-    offsetX: 141,
-  };
-  const snapshot = { frame, viewportWidth: 1440, viewportHeight: 1000 };
-  assert.deepEqual(liveAnalysisViewport(1440, 1000, snapshot), frame);
-  assert.deepEqual(liveAnalysisViewport(390, 844, snapshot), liveMotionViewport(390, 844));
-  assert.deepEqual(
-    liveAnalysisViewport(1440, 1000, { ...snapshot, frame: { ...frame, scale: NaN } }),
-    liveMotionViewport(1440, 1000),
-  );
-});
-
-test('page clearing keeps the same rotating ring before acceleration and eye drawing begin', () => {
-  const options = { initialTime: 10.4, initialRotation: 7.125 };
-  const initial = liveEyeChoreography(0, options);
-  assert.equal(initial.rotation, options.initialRotation);
-  for (const time of [0, 100, ANALYSIS_ENTRY_MS - 1]) {
-    const frame = liveEyeChoreography(time, options);
-    assert.equal(frame.entering, true);
-    assert.equal(frame.sceneTime, 10.4);
-    assert.equal(frame.reflection, 1);
-    assert.ok(Math.abs(frame.rotation - options.initialRotation - time * 0.00062) < 1e-12);
-  }
-  const edge = liveEyeChoreography(ANALYSIS_ENTRY_MS, options);
-  assert.equal(edge.entering, false);
-  assert.equal(edge.sceneTime, 12);
-  const later = liveEyeChoreography(ANALYSIS_ENTRY_MS + 850, options);
-  assert.ok(later.sceneTime > 12);
-  assert.ok(later.rotation - edge.rotation > 2 * Math.PI);
-  assert.equal(liveEyeChoreography(4000, options).sceneTime, 18);
-  assert.equal(liveEyeChoreography(60000, options).reflection, 1);
-});
-
-test('an early analysis click finishes the captured formation continuously without showing the eye early', () => {
-  const options = { initialTime: 7.1, initialRotation: 3 };
-  assert.equal(liveEyeChoreography(0, options).sceneTime, options.initialTime);
-  const frame = liveEyeChoreography(ANALYSIS_ENTRY_MS, options);
-  assert.equal(frame.entering, true);
-  assert.ok(frame.sceneTime < 12 && frame.sceneTime > options.initialTime);
-  assert.equal(liveEyeChoreography(1000, options).entering, false);
-  const reduced = liveEyeChoreography(0, { ...options, reduced: true });
-  assert.equal(reduced.rotation, options.initialRotation);
-  assert.equal(reduced.sceneTime, 18);
-  assert.equal(reduced.entering, false);
 });
 
 test('a pending server response never completes even after a long wait', () => {
@@ -101,4 +52,100 @@ test('fast success keeps the four-second minimum and slow success adds only a sh
     clock.complete(completion + 1000);
     assert.equal(clock.readyAt, ready);
   }
+});
+
+function motionFixture({ reduced = false } = {}) {
+  let now = 0;
+  let nextId = 1;
+  const frames = [];
+  const raf = new Map();
+  const timers = new Map();
+  const events = () => {
+    const listeners = new Map();
+    return {
+      listeners,
+      addEventListener: (name, callback) => listeners.set(name, callback),
+      removeEventListener: (name) => listeners.delete(name),
+      dispatch: (name) => listeners.get(name)?.(),
+    };
+  };
+  const preference = { ...events(), matches: reduced };
+  const document = {
+    ...events(),
+    hidden: false,
+    createElement() {
+      return {
+        clientWidth: 320,
+        dataset: {},
+        append() {},
+        setAttribute() {},
+        remove() {},
+        getContext: () => ({ setTransform() {} }),
+      };
+    },
+  };
+  const window = { ...events(), matchMedia: () => preference, devicePixelRatio: 1 };
+  const context = vm.createContext({
+    document,
+    window,
+    performance: { now: () => now },
+    pupilMotionFrame,
+    drawPupilFrame: (_context, _size, frame) => frames.push(frame),
+    requestAnimationFrame: (callback) => {
+      const id = nextId++;
+      raf.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame: (id) => raf.delete(id),
+    setTimeout: (callback, delay) => {
+      const id = nextId++;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout: (id) => timers.delete(id),
+  });
+  const source = readFileSync(
+    new URL('../../src/features/analysis/live-eye-motion.js', import.meta.url),
+    'utf8',
+  )
+    .replace(/^import[^\n]+\n/, '')
+    .replaceAll('export ', '');
+  vm.runInContext(source, context);
+  const eye = context.mountLiveAnalysisEye({ replaceChildren() {} });
+  return { eye, raf, timers, frames, document, window, preference, setNow: (value) => (now = value) };
+}
+
+test('hidden tabs stop drawing and resume the pupil without jumping rotation', () => {
+  const fixture = motionFixture();
+  fixture.setNow(2500);
+  fixture.window.dispatch('resize');
+  const rotation = fixture.frames.at(-1).rotation;
+  fixture.document.hidden = true;
+  fixture.document.dispatch('visibilitychange');
+  assert.equal(fixture.raf.size, 0);
+  const count = fixture.frames.length;
+  fixture.setNow(6500);
+  fixture.window.dispatch('resize');
+  assert.equal(fixture.frames.length, count);
+  fixture.document.hidden = false;
+  fixture.document.dispatch('visibilitychange');
+  assert.equal(fixture.frames.at(-1).rotation, rotation);
+  assert.equal(fixture.raf.size, 1);
+  fixture.eye.dispose();
+  assert.equal(fixture.raf.size, 0);
+  assert.equal(fixture.timers.size, 0);
+  assert.equal(fixture.document.listeners.size, 0);
+  assert.equal(fixture.window.listeners.size, 0);
+  assert.equal(fixture.preference.listeners.size, 0);
+});
+
+test('reduced motion uses timed progress updates instead of an animation-frame loop', async () => {
+  const fixture = motionFixture({ reduced: true });
+  assert.equal(fixture.raf.size, 0);
+  assert.equal(fixture.timers.size, 1);
+  assert.equal([...fixture.timers.values()][0].delay, 250);
+  assert.equal(fixture.frames.at(-1).rotation, 0);
+  fixture.eye.dispose();
+  assert.equal(fixture.timers.size, 0);
+  await fixture.eye.whenSettled();
 });

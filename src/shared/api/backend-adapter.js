@@ -279,6 +279,9 @@ async function demoApi(path, options, ApiError, catalog) {
       page,
       page_size: pageSize,
       filters: {
+        roles: [...new Set(available.map((item) => item.role).filter(Boolean))].sort((a, b) =>
+          a.localeCompare(b, 'ko'),
+        ),
         locations: [...new Set(available.map((item) => item.location))],
         employment_types: [...new Set(available.map((item) => item.employment_type))],
         experience_levels: [...new Set(available.map((item) => item.experience_level))],
@@ -459,12 +462,14 @@ function mockPosting(id, catalogPostings = []) {
 function filteredPostings(items, params) {
   const q = (params.get('q') || '').toLocaleLowerCase();
   const role = (params.get('role') || '').toLocaleLowerCase();
+  const roleCategory = params.get('role_category') || '';
   const filters = ['location', 'employment_type', 'experience_level', 'skill'];
   let result = items.filter((posting) => {
     const text =
       `${posting.company} ${posting.role} ${posting.description} ${posting.skills.join(' ')}`.toLocaleLowerCase();
     return (
       (!q || text.includes(q)) &&
+      (!roleCategory || posting.role === roleCategory) &&
       (!role || `${posting.role} ${posting.description}`.toLocaleLowerCase().includes(role)) &&
       filters.every((key) => {
         const value = params.get(key);
@@ -1236,6 +1241,9 @@ export async function backendApi(path, options, request, ApiError) {
         page,
         page_size: pageSize,
         filters: {
+          roles: [...new Set(available.map((item) => item.role).filter(Boolean))].sort((a, b) =>
+            a.localeCompare(b, 'ko'),
+          ),
           locations: [...new Set(available.map((item) => item.location))],
           employment_types: [...new Set(available.map((item) => item.employment_type))],
           experience_levels: [...new Set(available.map((item) => item.experience_level))],

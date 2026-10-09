@@ -151,6 +151,35 @@ test('registered Markdown jobs replace local mock duplicates and keep the backen
   assert.match(workspace.draft.job_text, /원본 업무 설명/);
 });
 
+test('job classification filters registered roles exactly and preserves backend identities', async () => {
+  sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');
+  const sources = [sourceMarkdown('001', '데이터 분석'), sourceMarkdown('002', '데이터 분석 플랫폼 개발')];
+  const jobs = sources.map((source, index) => ({
+    id: `registered-${index + 1}`,
+    title: '백엔드 공고 제목',
+    source_name: 'local_markdown',
+    source_external_id: source.filename,
+    description: source.content,
+  }));
+  const request = async (path) => {
+    if (path === '/local-data/career-markdown') return { items: sources };
+    if (path === '/jobs?limit=100') return jobs;
+    const job = jobs.find((item) => path === `/jobs/${item.id}`);
+    if (job) return job;
+    throw new Error(`Unexpected backend call: ${path}`);
+  };
+  const category = encodeURIComponent('데이터 분석');
+  const result = await backendApi(`/job-postings?role_category=${category}`, {}, request, ApiError);
+  assert.equal(result.total, 1);
+  assert.equal(result.items[0].id, 'registered-1');
+  assert.equal(result.items[0].role, '데이터 분석');
+  assert.deepEqual(result.filters.roles, ['데이터 분석', '데이터 분석 플랫폼 개발']);
+  const empty = await backendApi('/job-postings?role_category=unknown', {}, request, ApiError);
+  assert.equal(empty.total, 0);
+  assert.deepEqual(empty.items, []);
+  assert.deepEqual(empty.filters.roles, result.filters.roles);
+});
+
 test('a filename shared by another source cannot borrow a local fixture identity or content', async () => {
   sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');
   const local = sourceMarkdown('001', '로컬 직무', '로컬 회사');

@@ -426,6 +426,7 @@ function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
   const classes = new Set();
   const host = { setAttribute: (key, value) => attrs.set(key, value), style: {} };
   const evaluationStatus = { textContent: '' };
+  const percentage = { textContent: '0%' };
   const button = { addEventListener: (type, callback) => (button[type] = callback) };
   const dialog = {
     style: {},
@@ -435,7 +436,9 @@ function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
         ? button
         : selector === '[data-evaluation-status]'
           ? evaluationStatus
-          : host,
+          : selector === '[data-loading-percent]'
+            ? percentage
+            : host,
     setAttribute() {},
     addEventListener: (type, callback) => (dialog[type] = callback),
     showModal: () => events.push('modal-open'),
@@ -476,10 +479,8 @@ function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
       finishPreparationPresentation({ ...options, now: () => 4000 }),
   });
   vm.runInContext(overlayController, context);
-  const journey = { centerX: 640, centerY: 210, radius: 48, rotation: 3.25 };
   const loading = context.createReportLoading({
     draft: draft(),
-    journey,
     onCancel: () => events.push('cancelled'),
   });
   return {
@@ -489,11 +490,11 @@ function overlayFixture({ graphics = deferred(), settled = deferred() } = {}) {
     module,
     attrs,
     evaluationStatus,
+    percentage,
     events,
     document,
     dialog,
     button,
-    journey,
     mounted: () => mounted,
   };
 }
@@ -516,9 +517,9 @@ test('the real overlay starts analysis before graphics arrive and completes only
   assert.equal(fixture.events.includes('eye-mounted'), false);
   fixture.graphics.resolve(fixture.module);
   await nextTurn();
-  assert.equal(fixture.mounted().snapshot, fixture.journey);
   fixture.mounted().onProgress(100);
   assert.equal(fixture.attrs.get('aria-valuenow'), '99');
+  assert.equal(fixture.percentage.textContent, '99%');
   assert.equal(fixture.events.includes('eye-complete'), false);
   request.resolve('validated-report');
   await nextTurn();
@@ -527,6 +528,7 @@ test('the real overlay starts analysis before graphics arrive and completes only
   fixture.settled.resolve();
   assert.equal(await run, 'validated-report');
   assert.equal(fixture.attrs.get('aria-valuenow'), '100');
+  assert.equal(fixture.percentage.textContent, '100%');
   assert.equal(fixture.attrs.get('aria-busy'), 'false');
   fixture.loading.dispose();
 });
@@ -596,12 +598,14 @@ test('server stage updates use safe copy and cannot complete or update a cancell
   assert.equal(fixture.events.includes('eye-complete'), false);
   fixture.mounted().onProgress(100);
   assert.equal(fixture.attrs.get('aria-valuenow'), '99');
+  assert.equal(fixture.percentage.textContent, '99%');
   fixture.button.click();
   const statusAfterCancel = fixture.evaluationStatus.textContent;
   progress({ run: { current_stage: 'reporting' } });
   assert.equal(fixture.evaluationStatus.textContent, statusAfterCancel);
   fixture.mounted().onProgress(12);
   assert.equal(fixture.attrs.get('aria-valuenow'), '99');
+  assert.equal(fixture.percentage.textContent, '99%');
   request.resolve('late report');
   await rejection;
 });

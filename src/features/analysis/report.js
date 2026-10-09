@@ -256,6 +256,10 @@ export function analysisReport(draft) {
         </span>
       </div>
       <div>
+        <div class="report-save-control">
+          <button type="button" class="button secondary compact" id="save-report" disabled aria-describedby="report-save-status">저장하기</button>
+          <small id="report-save-status">${backend ? '분석 결과는 서버에 자동 기록됩니다. 별도 보관 기능은 준비 중입니다.' : '시연 결과입니다. 저장 기능은 준비 중입니다.'}</small>
+        </div>
         ${draft.selected_posting_id ? `<a class="button secondary compact" href="#/${e(opportunityPath(draft.career_target || { role_id: 'custom', label: draft.role }))}">다른 공고로 모의지원</a>` : ''}
         <button
           type="button"

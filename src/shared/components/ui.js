@@ -100,7 +100,7 @@ function renderWorkflowStep(item, index, currentStep) {
 }
 
 function renderWorkflowSteps(draft, page) {
-  const step = { resume: 1, 'desired-role': 2, job: 2, opportunities: 3 }[page] || 4;
+  const step = { resume: 1, 'desired-role': 2, job: 2, jobs: 2, opportunities: 2 }[page] || 3;
   const target = draft.career_target;
   const prepared = !!(
     draft.selected_posting_id ||
@@ -112,16 +112,10 @@ function renderWorkflowSteps(draft, page) {
   const steps = [
     { label: '이력서', path: 'resume', icon: 'file', enabled: true },
     {
-      label: '희망 직무',
-      path: 'desired-role',
-      icon: 'lens',
-      enabled: !!draft.resume_text || !!draft.guest,
-    },
-    {
       label: '채용공고',
-      path: target?.role_id ? opportunityPath(target) : 'jobs',
+      path: target?.role_id ? opportunityPath(target) : 'desired-role',
       icon: 'briefcase',
-      enabled: !!target?.role_id,
+      enabled: !!draft.resume_text || !!draft.guest || !!target?.role_id || step === 2,
     },
     {
       label: '모의 지원',
@@ -141,10 +135,12 @@ function renderWorkflowSteps(draft, page) {
 }
 
 export function renderPrimaryNav(page = '', draft = {}) {
-  // Global destinations describe product areas; only the workflow bar tracks inner steps.
+  // Role selection and posting selection are consecutive phases of the same product area.
   const current = {
     intro: 'intro',
     resume: 'resume',
+    'desired-role': 'jobs',
+    job: 'jobs',
     jobs: 'jobs',
     opportunities: 'jobs',
     practice: 'practice',
@@ -154,7 +150,11 @@ export function renderPrimaryNav(page = '', draft = {}) {
   const items = [
     { key: 'intro', path: 'intro', label: '소개' },
     { key: 'resume', path: 'resume', label: '이력서' },
-    { key: 'jobs', path: target?.role_id ? opportunityPath(target) : 'jobs', label: '채용공고' },
+    {
+      key: 'jobs',
+      path: target?.role_id ? opportunityPath(target) : 'desired-role',
+      label: '채용공고',
+    },
     { key: 'practice', path: 'practice', label: '모의 지원' },
   ];
 
@@ -167,6 +167,20 @@ export function renderPrimaryNav(page = '', draft = {}) {
       `,
         )
         .join('')}
+    </nav>
+  `;
+}
+
+export function renderPostingPhases(active = 'role') {
+  return `
+    <nav class="posting-phases" aria-label="채용공고 선택 순서">
+      <a href="#/desired-role" ${active === 'role' ? 'aria-current="step"' : ''}>
+        <span>1</span> 희망 직무 선택
+      </a>
+      <span class="posting-phases__arrow" aria-hidden="true">${icon('arrow', 16)}</span>
+      ${active === 'posting'
+        ? '<span class="posting-phases__current" aria-current="step"><span>2</span> 공고 선택</span>'
+        : '<span class="posting-phases__pending" aria-disabled="true"><span>2</span> 공고 선택</span>'}
     </nav>
   `;
 }
@@ -207,7 +221,7 @@ export function shell(content, { user, draft = {}, page = 'resume' } = {}) {
     </header>
     <div class="app-shell">
       ${user?.demo ? '<p class="notice info" role="status">화면 체험용 계정입니다. 입력한 이력서와 결과는 이 탭에만 저장되며 백엔드에 전송되지 않습니다.</p>' : ''}
-      ${['resume', 'desired-role', 'job', 'opportunities', 'practice', 'questions', 'result', 'preparing'].includes(page) ? renderWorkflowSteps(draft, page) : ''}
+      ${['resume', 'desired-role', 'job', 'jobs', 'opportunities', 'practice', 'questions', 'result', 'preparing'].includes(page) ? renderWorkflowSteps(draft, page) : ''}
       <div
         id="notices"
         class="notices"

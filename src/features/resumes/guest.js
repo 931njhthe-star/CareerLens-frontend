@@ -1,4 +1,5 @@
 import { escapeHtml as e, icon } from '../../shared/components/ui.js';
+import { validateResumeFileMetadata } from './file-preflight.js';
 
 /** Render metadata only. The upload handler owns the File and temporary server session. */
 export function guestResumePage(metadata = '') {
@@ -18,10 +19,11 @@ export function guestResumePage(metadata = '') {
         <div class="upload-area">
           <div class="upload-icon">${icon('upload', 26)}</div>
           <h2 id="guest-resume-title">이력서 첨부</h2>
-          <p id="guest-file-hint">PDF, DOCX, TXT · 최대 10MB</p>
+          <p id="guest-file-hint">Markdown(.md)만 첨부 가능 · UTF-8 텍스트 · 최대 10MB</p>
+          <p class="input-hint">경력·프로젝트·기술·학력을 텍스트로 작성해 .md로 저장해 주세요. 업로드 전에 파일 형식과 크기, 본문을 확인합니다.</p>
           <div class="file-controls">
-            <input id="guest-resume-file" name="file" type="file" accept=".pdf,.docx,.txt" ${resume_attached ? '' : 'required'}
-              aria-label="이력서 파일 선택" aria-describedby="guest-file-hint guest-file-status" />
+            <input id="guest-resume-file" name="file" type="file" accept=".md" ${resume_attached ? '' : 'required'}
+              aria-label="Markdown 이력서 파일 선택" aria-describedby="guest-file-hint guest-file-status" />
           </div>
           <p id="guest-file-status" class="file-caption" role="status">${e(filename ? `${resume_attached ? '첨부 완료 · ' : '선택한 파일 · '}${filename}` : '선택한 파일이 없습니다.')}</p>
         </div>
@@ -35,7 +37,7 @@ export function guestResumePage(metadata = '') {
           }
         </div>
         <div class="form-actions guest-resume__actions">
-          <span class="quiet">다음 단계에서 희망 직무를 선택합니다.</span>
+          <span class="quiet">채용공고 단계에서 희망 직무를 고른 뒤 공고를 선택합니다.</span>
           <button type="submit" class="button primary workflow-next">첨부한 이력서로 계속 ${icon('arrow', 18)}</button>
         </div>
         </form>
@@ -50,8 +52,5 @@ export function guestResumePage(metadata = '') {
 
 export function guestFileMetadata(file) {
   if (!file) return '';
-  if (file.size > 10 * 1024 * 1024) throw new Error('파일은 10MB 이하로 선택해 주세요.');
-  if (!/\.(pdf|docx|txt)$/i.test(file.name))
-    throw new Error('PDF, DOCX, TXT 파일을 선택해 주세요.');
-  return file.name;
+  return validateResumeFileMetadata(file);
 }

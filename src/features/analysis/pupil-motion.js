@@ -1,0 +1,132 @@
+const TAU = Math.PI * 2;
+export const PUPIL_ENTRY_MS = 1100;
+export const PUPIL_ROTATION_MS = 24000;
+const clamp = (value) => Math.max(0, Math.min(1, value));
+const smooth = (value) => {
+  const t = clamp(value);
+  return t * t * (3 - 2 * t);
+};
+
+/** Separate periods produce continuous deceleration and reversal, without angle resets. */
+export function pupilMotionFrame(elapsed, { reduced = false } = {}) {
+  const time = Math.max(0, Number.isFinite(elapsed) ? elapsed : 0);
+  const moving = reduced ? 0 : Math.max(0, time - PUPIL_ENTRY_MS);
+  const seconds = moving / 1000;
+  return {
+    scale: reduced ? 1 : smooth(time / PUPIL_ENTRY_MS),
+    opacity: reduced ? 1 : smooth(time / 440),
+    rotation: (moving / PUPIL_ROTATION_MS) * TAU,
+    outer: seconds * 0.14,
+    dashes: 1.8 * Math.sin((moving / 8200) * TAU),
+    innerDashes: 1.55 * (Math.sin((moving / 11300) * TAU + 1.1) - Math.sin(1.1)),
+    reactor: seconds * 0.038,
+    pulse: reduced ? 0.65 : 0.5 + 0.5 * Math.sin(seconds * 1.7),
+    lights: reduced ? 0 : (moving / 5400) * TAU,
+  };
+}
+
+/** A restrained halo and concentric rings; no image assets or mirrored side fibres. */
+export function drawPupilFrame(context, size, frame) {
+  context.clearRect(0, 0, size, size);
+  if (frame.scale <= 0) return;
+  const radius = size * 0.365;
+  context.save();
+  context.translate(size / 2, size / 2);
+  context.scale(frame.scale, frame.scale);
+  context.rotate(frame.rotation);
+  context.globalAlpha = frame.opacity;
+  context.lineCap = 'round';
+
+  const ring = (r, start, end, color, width = 1, alpha = 1) => {
+    context.globalAlpha = frame.opacity * alpha;
+    context.strokeStyle = color;
+    context.lineWidth = width;
+    context.beginPath();
+    context.arc(0, 0, radius * r, start, end);
+    context.stroke();
+  };
+  const halo = context.createRadialGradient(0, 0, radius * 0.15, 0, 0, radius * 1.15);
+  halo.addColorStop(0, 'rgba(207,244,255,0.20)');
+  halo.addColorStop(0.46, 'rgba(213,237,255,0.16)');
+  halo.addColorStop(1, 'rgba(234,247,255,0)');
+  context.fillStyle = halo;
+  context.beginPath();
+  context.arc(0, 0, radius * 1.15, 0, TAU);
+  context.fill();
+
+  context.save();
+  context.rotate(frame.outer);
+  ring(1, 0, TAU, '#86c9ef', 1, 0.62);
+  ring(0.958, 0, TAU, '#4b89ce', 1.15, 0.82);
+  ring(0.925, 0, TAU, '#addcff', 0.7, 0.65);
+  for (let i = 0; i < 72; i++) {
+    const angle = (i / 72) * TAU;
+    const major = i % 6 === 0;
+    const length = major ? 0.075 : 0.037;
+    context.globalAlpha = frame.opacity * (major ? 0.73 : 0.27);
+    context.strokeStyle = major ? '#397dd0' : '#69b8e8';
+    context.lineWidth = major ? 1.25 : 0.85;
+    context.beginPath();
+    context.moveTo(Math.cos(angle) * radius * 1.06, Math.sin(angle) * radius * 1.06);
+    context.lineTo(
+      Math.cos(angle) * radius * (1.06 + length),
+      Math.sin(angle) * radius * (1.06 + length),
+    );
+    context.stroke();
+  }
+  for (const start of [0.28, 2.1, 4.48]) {
+    ring(1, start, start + 0.3, '#3679ce', 2, 0.9);
+    ring(0.958, start + 0.11, start + 0.31, '#b4eeff', 2, 0.9);
+  }
+  context.restore();
+
+  context.save();
+  context.rotate(frame.dashes);
+  for (let i = 0; i < 18; i++) {
+    const start = (i / 18) * TAU;
+    ring(0.805, start, start + (i % 3 === 0 ? 0.12 : 0.225), '#3377c5', 1.45, 0.8);
+  }
+  ring(0.855, 0, TAU, '#a4d2ed', 0.65, 0.7);
+  context.restore();
+
+  context.save();
+  context.rotate(frame.innerDashes);
+  for (let i = 0; i < 12; i++) {
+    const start = (i / 12) * TAU;
+    ring(0.688, start, start + (i % 3 === 1 ? 0.1 : 0.34), '#57aee0', 1.1, 0.8);
+  }
+  for (let i = 0; i < 64; i++) {
+    const start = (i / 64) * TAU;
+    ring(0.615, start, start + 0.013, '#397cc1', 1, 0.55);
+  }
+  context.restore();
+
+  context.save();
+  context.rotate(frame.reactor);
+  ring(0.505, 0, TAU, '#8bd2f1', 0.8, 0.45);
+  for (let i = 0; i < 28; i++) {
+    const start = (i / 28) * TAU;
+    const light = (0.5 + 0.5 * Math.cos(start - frame.lights)) ** 3;
+    context.shadowColor = '#65d6f3';
+    context.shadowBlur = light * 9;
+    ring(0.456, start, start + 0.137, '#44b9df', 4.5, 0.32 + 0.68 * light);
+  }
+  context.shadowBlur = 0;
+  context.restore();
+
+  const core = context.createRadialGradient(0, 0, 0, 0, 0, radius * 0.38);
+  core.addColorStop(0, 'rgba(255,255,255,1)');
+  core.addColorStop(0.36, 'rgba(215,251,255,0.8)');
+  core.addColorStop(0.7, `rgba(101,216,244,${0.21 + frame.pulse * 0.14})`);
+  core.addColorStop(1, 'rgba(130,217,255,0)');
+  context.globalAlpha = frame.opacity;
+  context.fillStyle = core;
+  context.beginPath();
+  context.arc(0, 0, radius * 0.38, 0, TAU);
+  context.fill();
+  context.shadowColor = '#74d9f4';
+  context.shadowBlur = 7 + frame.pulse * 4;
+  ring(0.304, 0, TAU, '#78ccea', 1.6, 0.5 + frame.pulse * 0.23);
+  ring(0.275, 0, TAU, '#c2f2ff', 1.1, 0.55);
+  context.restore();
+}

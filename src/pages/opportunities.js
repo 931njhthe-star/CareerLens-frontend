@@ -1,16 +1,17 @@
-import { escapeHtml as e, icon } from '../shared/components/ui.js';
+import { escapeHtml as e, icon, renderPostingPhases } from '../shared/components/ui.js';
 
 const isExample = (posting) => posting.source_type === 'example' || posting.is_example === true;
 
 export function opportunitiesPage() {
   return `
+    ${renderPostingPhases('posting')}
     <div class="page-heading opportunities-heading"><div>
       <h1>어떤 공고에 지원해 볼까요?</h1>
       <p>희망 직무와 관련된 공고를 비교하고, 모의지원할 공고를 선택하세요.</p>
     </div><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>
     <section class="opportunities" aria-label="희망 직무별 채용공고">
       <aside class="opportunities__sidebar" aria-label="채용공고 목록">
-        <div class="opportunities__list-heading"><h2 id="opportunity-role">채용공고</h2><p id="opportunity-count" role="status">목록을 불러오는 중…</p></div>
+        <div class="opportunities__list-heading"><h2 id="opportunity-role">채용공고</h2><p id="opportunity-count" role="status">목록을 불러오는 중…</p><a class="back-link" href="#/jobs">전체 직무별 공고 보기</a></div>
         <div id="opportunity-list" class="opportunities__list" aria-busy="true"></div>
         <nav id="opportunity-pagination" class="opportunities__pagination" aria-label="공고 페이지"></nav>
       </aside>

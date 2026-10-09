@@ -32,7 +32,14 @@ export function catalogRoute(hash) {
 
 export function catalogQuery(input) {
   const query = new URLSearchParams();
-  for (const name of ['q', 'location', 'employment_type', 'experience_level', 'skill']) {
+  for (const name of [
+    'q',
+    'role_category',
+    'location',
+    'employment_type',
+    'experience_level',
+    'skill',
+  ]) {
     const value = String(input.get(name) || '').trim();
     if (value) query.set(name, value);
   }

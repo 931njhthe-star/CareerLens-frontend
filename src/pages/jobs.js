@@ -1,4 +1,4 @@
-import { escapeHtml as e, icon } from '../shared/components/ui.js';
+import { escapeHtml as e, icon, renderPostingPhases } from '../shared/components/ui.js';
 import { safeSourceUrl } from '../features/job-postings/catalog-state.js';
 
 const detailPath = (posting) => `#/jobs/${encodeURIComponent(posting.id)}`;
@@ -137,6 +137,7 @@ function renderCatalogSearch(filters, query, user) {
         </button>
       </div>
       <div class="catalog-filters">
+        ${renderCatalogFilter('role_category', '직무 분류', filters.roles, query)}
         ${renderCatalogFilter('location', '지역', filters.locations, query)}
         ${renderCatalogFilter('employment_type', '고용 형태', filters.employment_types, query)}
         ${renderCatalogFilter('experience_level', '경력', filters.experience_levels, query)}
@@ -215,11 +216,11 @@ export function jobListPage(data, query, user) {
   const filters = data.filters || {};
 
   return `
+    ${renderPostingPhases('posting')}
     <div class="page-heading catalog-heading">
       <div>
-        <span class="eyebrow">FIND YOUR NEXT STEP</span>
-        <h1>내 경험과 이어지는 기회</h1>
-        <p>공고를 찾아 저장하고, 이력서로 모의지원을 준비해 보세요.</p>
+        <h1>직무별 채용공고</h1>
+        <p>공고에 기재된 직무로 분류해 관심 있는 일을 찾아보세요.</p>
       </div>
       <a
         class="button primary compact"
@@ -238,7 +239,7 @@ export function jobListPage(data, query, user) {
           ${query.get('saved') === '1' ? '저장한 공고' : '둘러볼 공고'}
           <span>${Number(data.total).toLocaleString('ko-KR')}개</span>
         </h2>
-        <span>지역·경력 필터 선택 후 검색을 눌러주세요.</span>
+        <span>직무·지역·경력 선택 후 검색을 눌러주세요.</span>
       </div>
       ${
         data.items.length
@@ -278,6 +279,7 @@ export function jobDetailPage(posting, user) {
   const url = safeSourceUrl(posting.source_url);
   const own = user && posting.is_owner === true;
   return `
+    ${renderPostingPhases('posting')}
     <div class="catalog-content job-detail">
       <a
         href="#/jobs"

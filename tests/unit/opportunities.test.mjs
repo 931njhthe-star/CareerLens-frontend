@@ -16,7 +16,7 @@ import { shell } from '../../src/shared/components/ui.js';
 
 test('file choice validates metadata while guest attachment UI never previews the resume', () => {
   const file = {
-    name: '경험.pdf',
+    name: '경험.md',
     size: 1000,
     text() {
       throw new Error('must not read');
@@ -26,9 +26,9 @@ test('file choice validates metadata while guest attachment UI never previews th
     },
   };
   assert.equal(guestFileMetadata(file), file.name);
-  assert.throws(() => guestFileMetadata({ name: 'large.pdf', size: 11000000 }));
+  assert.throws(() => guestFileMetadata({ name: 'large.md', size: 11000000 }));
   assert.throws(() => guestFileMetadata({ name: 'script.html', size: 100 }));
-  const html = guestResumePage('<script>private</script>.pdf');
+  const html = guestResumePage('<script>private</script>.md');
   assert.ok(!html.includes('<script>'));
   assert.ok(!html.includes('id="upload-form"'));
   assert.ok(!html.includes('<textarea'));

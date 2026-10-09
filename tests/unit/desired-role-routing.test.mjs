@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { File } from 'node:buffer';
 import vm from 'node:vm';
 import { shell, escapeHtml } from '../../src/shared/components/ui.js';
 import { workspacePage } from '../../src/pages/workspace.js';
@@ -8,7 +9,8 @@ import { jobsLoading } from '../../src/pages/jobs.js';
 import { opportunitiesPage } from '../../src/pages/opportunities.js';
 import { introductionPage } from '../../src/pages/introduction.js';
 import { renderAuth } from '../../src/features/auth/auth.js';
-import { guestResumePage } from '../../src/features/resumes/guest.js';
+import { guestResumePage, guestFileMetadata } from '../../src/features/resumes/guest.js';
+import { validateResumeFile } from '../../src/features/resumes/file-preflight.js';
 import { reportGatePage } from '../../src/features/auth/report-gate.js';
 import { draftForPage, remainingEdits } from '../../src/app/workspace-state.js';
 import { catalogRoute } from '../../src/features/job-postings/catalog-state.js';
@@ -25,19 +27,29 @@ const controller = readFileSync(new URL('../../src/app/main.js', import.meta.url
   .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
   .replace(/\bstart\(\);\s*$/, '');
 
-function routeFixture({ member = false, draft = {}, edits = {}, motion = false } = {}) {
+function routeFixture({ member = false, draft = {}, edits = {} } = {}) {
   const elements = new Map();
-  const calls = { catalog: 0, opportunities: [], gates: 0, journeys: [], observers: [] };
-  let heading;
-  const element = (id) => ({
+  const calls = {
+    catalog: 0,
+    opportunities: [],
+    gates: 0,
+    journeys: [],
+    observers: [],
+    api: [],
+    notices: [],
+  };
+  const element = () => ({
     dataset: {},
     innerHTML: '',
     value: '',
     selectedOptions: [{ dataset: {}, textContent: '' }],
-    addEventListener() {},
+    listeners: new Map(),
+    addEventListener(type, callback) {
+      this.listeners.set(type, callback);
+    },
     focus() {},
     classList: { add() {} },
-    querySelector: () => (id === 'main' && motion ? heading : null),
+    querySelector: () => null,
     querySelectorAll: () => [],
   });
   let markup = '';
@@ -49,9 +61,6 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
     set innerHTML(value) {
       markup = value;
       elements.clear();
-      heading = /data-intro-journey|class="page-heading|class="posting-detail__header/.test(value)
-        ? { isConnected: true }
-        : null;
       for (const match of value.matchAll(/\bid="([^"]+)"/g))
         elements.set(match[1], element(match[1]));
     },
@@ -87,6 +96,14 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
     window: { addEventListener() {}, scrollTo() {} },
     URLSearchParams,
     AbortController,
+    FormData: class {
+      constructor(form) {
+        this.values = form.testValues || new Map();
+      }
+      get(name) {
+        return this.values.get(name);
+      }
+    },
     MutationObserver: class {
       constructor(callback) {
         this.callback = callback;
@@ -109,6 +126,8 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
     introductionPage,
     renderAuth,
     guestResumePage,
+    guestFileMetadata,
+    validateResumeFile,
     reportGatePage,
     draftForPage,
     remainingEdits,
@@ -119,27 +138,8 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
     guestWorkspace,
     practiceDestination,
     mountJourneyMotion(host, options) {
-      const state = {
-        host,
-        options,
-        updates: [],
-        disposed: false,
-        snapshot: { ...options.snapshot, phase: options.phase, rotation: 1.75, progress: 2.6 },
-      };
-      calls.journeys.push(state);
-      return {
-        capture: () => ({ ...state.snapshot }),
-        update(next) {
-          if (next.phase !== undefined) {
-            state.updates.push(next.phase);
-            state.snapshot.phase = next.phase;
-          }
-          if (next.host) state.host = next.host;
-        },
-        dispose() {
-          state.disposed = true;
-        },
-      };
+      calls.journeys.push({ host, options });
+      assert.fail('ordinary workflow pages must not mount a background journey');
     },
     stopCatalogLoad() {},
     stopResumeExamples() {},
@@ -148,7 +148,12 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
     bindResumeExamples() {},
     bindIntroduction() {},
     bindAuth() {},
-    notice() {},
+    notice(message) {
+      calls.notices.push(message);
+    },
+    pending(_form, _label, action) {
+      calls.pending = action();
+    },
     bindCatalog() {
       calls.catalog += 1;
     },
@@ -159,6 +164,7 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
       calls.gates += 1;
     },
     api: async (path) => {
+      calls.api.push(path);
       assert.equal(path, '/career-roles');
       return {
         items: [
@@ -190,10 +196,6 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
       return markup;
     },
     element: (id) => elements.get(id),
-    replaceCatalogHeading() {
-      heading = { isConnected: true };
-      calls.observers.at(-1)?.callback();
-    },
     snapshot: () => JSON.parse(vm.runInContext('JSON.stringify({workspace, edits})', context)),
     bridge() {
       context.testBridge = {
@@ -207,10 +209,21 @@ function routeFixture({ member = false, draft = {}, edits = {}, motion = false }
     changeOwner() {
       vm.runInContext('session = {user: {id: "different-owner"}}', context);
     },
+    setApi(handler) {
+      context.api = async (path, options) => {
+        calls.api.push(path);
+        return handler(path, options);
+      };
+    },
     transitionState: () => app.dataset.reportTransition,
-    resumeMotion(action) {
-      context.resumeAction = action;
-      return vm.runInContext('withResumeMotion(resumeAction)', context);
+    async submit(id, values) {
+      const form = elements.get(id);
+      assert.ok(form, 'upload form is rendered');
+      form.testValues = new Map(Object.entries(values));
+      const submit = form.listeners.get('submit');
+      assert.equal(typeof submit, 'function', 'production submit handler is bound');
+      submit({ preventDefault() {} });
+      await calls.pending;
     },
     async render(route = location.hash) {
       location.hash = route;
@@ -232,8 +245,12 @@ function assertRolePage(fixture) {
   assert.match(fixture.markup, /data-page="desired-role"/);
   assert.match(fixture.markup, /희망하는 직무를 선택해 주세요/);
   const header = fixture.markup.slice(0, fixture.markup.indexOf('</header>'));
-  assert.doesNotMatch(header, /희망 직무|aria-current=/);
+  assert.doesNotMatch(header, /희망 직무/);
+  assert.match(header, /aria-current="page">채용공고<\/a>/);
   assert.match(fixture.markup, /aria-current="step"[^>]*>\s*<span class="step-number">2<\/span>/);
+  const workflow = fixture.markup.match(/class="steps"[\s\S]*?<\/nav>/)?.[0];
+  assert.ok(workflow, 'workflow navigation is present');
+  assert.equal((workflow.match(/class="step-number"/g) || []).length, 3);
   assert.equal(fixture.calls.catalog, 0);
   assert.equal(fixture.calls.opportunities.length, 0);
 }
@@ -258,7 +275,7 @@ function assertSavedRolePostingLink(
 }
 
 function postingWorkflowStep(markup) {
-  const step = markup.match(/<(a|span)\s+([^>]+)>\s*<span class="step-number">3<\/span>/);
+  const step = markup.match(/<(a|span)\s+([^>]+)>\s*<span class="step-number">2<\/span>/);
   assert.ok(step, 'posting workflow step is present');
   return { tag: step[1], attributes: step[2] };
 }
@@ -337,7 +354,7 @@ for (const member of [false, true]) {
     assertSavedRoleWorkflowLink(fixture.markup, saved);
   });
 
-  test(`${label} unsaved role does not enable posting workflow before the role is saved`, async () => {
+  test(`${label} unsaved role opens the combined posting step at role selection`, async () => {
     const fixture = routeFixture({
       member,
       draft,
@@ -347,13 +364,14 @@ for (const member of [false, true]) {
     await fixture.render('#/desired-role');
     assert.match(fixture.element('career-role').innerHTML, /value="ai"[^>]*selected>/);
     assert.match(fixture.markup, /저장 전 관심 사항/);
-    assert.equal(postingNavigationLink(fixture.markup), '#/jobs');
+    assert.equal(postingNavigationLink(fixture.markup), '#/desired-role');
     const step = postingWorkflowStep(fixture.markup);
-    assert.equal(step.tag, 'span');
-    assert.match(step.attributes, /aria-disabled="true"/);
+    assert.equal(step.tag, 'a');
+    assert.match(step.attributes, /href="#\/desired-role"/);
+    assert.match(fixture.markup, /posting-phases__pending" aria-disabled="true"><span>2<\/span> 공고 선택/);
   });
 
-  test(`${label} practice resumes at the saved role's postings in step three`, async () => {
+  test(`${label} practice resumes at the saved role's postings in combined step two`, async () => {
     const fixture = routeFixture({
       member,
       draft: { ...draft, career_target: { role_id: 'backend', label: '백엔드 개발자' } },
@@ -362,7 +380,7 @@ for (const member of [false, true]) {
     assert.match(fixture.location.hash, /^#\/opportunities\?/);
     assert.equal(fixture.calls.opportunities.length, 1);
     assert.equal(fixture.calls.opportunities[0].role_id, 'backend');
-    assert.match(fixture.markup, /aria-current="step"[^>]*>\s*<span class="step-number">3<\/span>/);
+    assert.match(fixture.markup, /aria-current="step"[^>]*>\s*<span class="step-number">2<\/span>/);
     assert.match(fixture.markup, /aria-current="page">채용공고<\/a>/);
     assert.doesNotMatch(fixture.markup, /data-page="desired-role"/);
   });
@@ -522,120 +540,125 @@ test('navigation disposes the retained modal and makes its late reveal callback 
   assert.equal(fixture.location.hash, '#/resume');
 });
 
-test('workflow navigation retargets one journey instance through async catalog loading', async () => {
-  const fixture = routeFixture({ draft: { resume_attached: true }, motion: true });
-  await fixture.render('#/desired-role');
-  const first = fixture.calls.journeys[0];
-  assert.equal(first.options.phase, 'elements');
-
-  await fixture.render('#/resume');
-  assert.equal(first.disposed, false);
-  assert.equal(fixture.calls.journeys.length, 1);
-  assert.equal(first.snapshot.phase, 'idle');
-
-  await fixture.render('#/jobs');
-  assert.equal(first.disposed, false, 'loading must not remove the active canvas');
-  assert.equal(first.snapshot.phase, 'orbit', 'target advances before async heading arrives');
-  assert.equal(fixture.calls.journeys.length, 1);
-  assert.equal(fixture.calls.observers.length, 1);
-  const previousHost = first.host;
-  fixture.replaceCatalogHeading();
-  assert.notEqual(first.host, previousHost);
-  assert.equal(fixture.calls.journeys.length, 1, 'late heading only rebinds the host');
-  await fixture.render('#/desired-role');
-  assert.equal(first.disposed, false);
-  assert.equal(first.snapshot.phase, 'elements');
-  assert.equal(fixture.calls.journeys.length, 1);
-
-  await fixture.render('#/email');
-  assert.equal(fixture.calls.observers[0].disconnected, true);
-  assert.equal(first.disposed, true, 'authentication does not retain a moving canvas');
-  assert.equal(fixture.calls.journeys.length, 1);
-});
-
-test('failed uploads return to the resume seed and late failure cannot alter a replacement page', async () => {
-  for (const attached of [false, true]) {
-    const fixture = routeFixture({ draft: { resume_attached: attached }, motion: true });
-    await fixture.render('#/resume');
-    const original = fixture.calls.journeys[0];
-    await assert.rejects(
-      fixture.resumeMotion(async () => {
-        throw new Error('Upload rejected');
-      }),
-      /Upload rejected/,
-    );
-    assert.deepEqual(original.updates, ['uploading', 'idle']);
-
-    let rejectUpload;
-    const pending = fixture.resumeMotion(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectUpload = reject;
-        }),
-    );
-    const rejection = assert.rejects(pending, /Late rejection/);
-    await fixture.render('#/desired-role');
-    const active = fixture.calls.journeys.at(-1);
-    const updates = [...active.updates];
-    rejectUpload(new Error('Late rejection'));
-    await rejection;
-    assert.equal(original.disposed, false);
-    assert.equal(active, original, 'the same renderer now belongs to the desired-role page');
-    assert.equal(active.snapshot.phase, 'elements');
-    assert.deepEqual(active.updates, updates, 'stale upload must not retarget the active page');
-  }
-});
-
 for (const member of [false, true]) {
-  test(`${member ? 'member' : 'guest'} saved resume never skips the page-specific motion stages`, async () => {
+  const label = member ? 'member' : 'guest';
+
+  test(`${label} workflow navigation never creates background motion or journey observers`, async () => {
     const fixture = routeFixture({
       member,
-      motion: true,
       draft: {
-        ...(member ? { resume_text: '저장된 가상 이력서' } : { resume_attached: true }),
+        ...(member
+          ? { resume_text: '저장된 가상 이력서', report: { score: 75, summary: '완료', verdict: '완료' } }
+          : { resume_attached: true, report_locked: true }),
         career_target: { role_id: 'backend', label: '백엔드 개발자' },
+        selected_posting_id: 'chosen-posting',
       },
     });
-    await fixture.render('#/intro');
-    assert.equal(fixture.calls.journeys.length, 0, 'intro has no journey decoration');
-    await fixture.render('#/resume');
-    assert.equal(fixture.calls.journeys.at(-1).options.phase, 'idle');
-    await fixture.resumeMotion(async () => 'uploaded');
-    assert.deepEqual(fixture.calls.journeys.at(-1).updates, ['uploading', 'uploading']);
-    await fixture.render('#/desired-role');
-    assert.equal(fixture.calls.journeys.at(-1).snapshot.phase, 'elements');
-    await fixture.render('#/opportunities?role_id=backend&label=백엔드%20개발자');
-    assert.equal(fixture.calls.journeys.at(-1).snapshot.phase, 'orbit');
-    assert.equal(fixture.calls.journeys.length, 1);
-    const circle = fixture.calls.journeys.at(-1);
-    await fixture.render('#/intro');
-    assert.equal(circle.disposed, true);
-    assert.equal(
-      fixture.calls.journeys.at(-1),
-      circle,
-      'returning home never mounts a dot or ring',
-    );
-    await fixture.render('#/resume');
-    assert.equal(fixture.calls.journeys.at(-1).options.phase, 'idle');
-    assert.equal(fixture.calls.journeys.at(-1).options.snapshot, undefined);
-    assert.notEqual(fixture.calls.journeys.at(-1), circle, 'home ends the previous journey');
+    for (const route of [
+      '#/intro', '#/resume', '#/desired-role', '#/jobs',
+      '#/opportunities?role_id=backend&label=백엔드%20개발자',
+      '#/jobs/chosen-posting', '#/result', '#/desired-role', '#/resume', '#/email',
+    ]) {
+      await fixture.render(route);
+      assert.equal(fixture.calls.journeys.length, 0, `${route} has no moving background`);
+      assert.equal(fixture.calls.observers.length, 0, `${route} does not observe journey anchors`);
+      assert.doesNotMatch(fixture.markup, /data-journey-active|journey-motion-canvas/);
+    }
+  });
+
+  test(`${label} invalid resume files are rejected before the controller makes an upload request`, async () => {
+    for (const [file, message] of [
+      [new File(['# My resume'], 'wrong.pdf'), /Markdown\(\.md\)/],
+      [new File(['   \n\t'], 'blank.md'), /본문이 비어/],
+      [new File([new Uint8Array([0xFF, 0xFE, 0x61, 0])], 'invalid.md'), /UTF-8/],
+    ]) {
+      const fixture = routeFixture({ member });
+      await fixture.render('#/resume');
+      await fixture.submit(member ? 'upload-form' : 'guest-upload-form', { file });
+      assert.equal(fixture.location.hash, '#/resume', 'invalid input stays on the editor');
+      assert.equal(fixture.calls.api.length, 0, 'no request sends the rejected file');
+      assert.match(fixture.calls.notices.at(-1), message);
+      assert.equal(fixture.calls.journeys.length, 0);
+      assert.equal(fixture.calls.observers.length, 0);
+    }
   });
 }
 
-test('async posting heading replacements keep the same in-progress renderer', async () => {
-  const fixture = routeFixture({ draft: { resume_attached: true }, motion: true });
-  await fixture.render('#/jobs');
-  assert.equal(fixture.calls.journeys.length, 0, 'loading markup has no misplaced anchor');
-  fixture.replaceCatalogHeading();
-  const initial = fixture.calls.journeys[0];
-  assert.equal(initial.options.phase, 'orbit');
-  initial.snapshot.time = 7.3;
-  initial.snapshot.seed = 124;
-  fixture.replaceCatalogHeading();
-  const replacement = fixture.calls.journeys.at(-1);
-  assert.equal(initial.disposed, false);
-  assert.equal(replacement, initial);
-  assert.equal(replacement.snapshot.phase, 'orbit');
-  assert.equal(replacement.snapshot.time, 7.3);
-  assert.equal(replacement.snapshot.seed, 124);
-});
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+for (const member of [false, true]) {
+  for (const change of ['navigation', 'account']) {
+    const label = `${member ? 'member' : 'guest'} ${change}`;
+    const invalidate = async (fixture) => {
+      if (change === 'navigation') await fixture.render('#/jobs');
+      else fixture.changeOwner();
+    };
+
+    test(`${label} change during local file preflight never starts the upload`, async () => {
+      const fixture = routeFixture({ member });
+      await fixture.render('#/resume');
+      const reading = deferred();
+      const contents = deferred();
+      const file = {
+        name: 'pending.md',
+        size: 30,
+        arrayBuffer() {
+          reading.resolve();
+          return contents.promise;
+        },
+      };
+      const submission = fixture.submit(member ? 'upload-form' : 'guest-upload-form', { file });
+      await reading.promise;
+      await invalidate(fixture);
+      const snapshot = fixture.snapshot();
+      const markup = fixture.markup;
+      const route = fixture.location.hash;
+      contents.resolve(new TextEncoder().encode('# Valid pending resume').buffer);
+      await submission;
+      assert.deepEqual(fixture.calls.api, [], 'stale local validation must not send the file');
+      assert.deepEqual(fixture.snapshot(), snapshot);
+      assert.equal(fixture.markup, markup);
+      assert.equal(fixture.location.hash, route);
+      assert.deepEqual(fixture.calls.notices, []);
+    });
+
+    test(`${label} change during an upload makes its late response inert`, async () => {
+      const fixture = routeFixture({ member });
+      await fixture.render('#/resume');
+      const uploaded = deferred();
+      const response = deferred();
+      const uploadPath = member ? '/resume/upload' : '/guest/resume/upload';
+      fixture.setApi((path) => {
+        assert.equal(path, uploadPath);
+        uploaded.resolve();
+        return response.promise;
+      });
+      const submission = fixture.submit(member ? 'upload-form' : 'guest-upload-form', {
+        file: new File(['# Valid resume'], 'resume.md'),
+      });
+      await uploaded.promise;
+      await invalidate(fixture);
+      const snapshot = fixture.snapshot();
+      const markup = fixture.markup;
+      const route = fixture.location.hash;
+      response.resolve({
+        draft: {
+          resume_attached: true,
+          resume_text: '# Late resume from the previous view',
+          filename: 'resume.md',
+        },
+        questions: [],
+      });
+      await submission;
+      assert.deepEqual(fixture.calls.api, [uploadPath]);
+      assert.deepEqual(fixture.snapshot(), snapshot, 'late data must not replace the current workspace');
+      assert.equal(fixture.markup, markup, 'late data must not rerender the current view');
+      assert.equal(fixture.location.hash, route, 'late uploads must not advance the workflow');
+      assert.deepEqual(fixture.calls.notices, []);
+    });
+  }
+}

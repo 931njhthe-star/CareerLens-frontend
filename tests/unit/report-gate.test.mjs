@@ -5,7 +5,7 @@ import { reportGatePage, bindReportGate } from '../../src/features/auth/report-g
 import { guestResumePage, guestFileMetadata } from '../../src/features/resumes/guest.js';
 
 test('guest attachment permits uploading and continuing without an editor or preview', () => {
-  const html = guestResumePage('<script>private</script>.pdf');
+  const html = guestResumePage('<script>private</script>.md');
   assert.match(html, /id="guest-upload-form"/);
   assert.match(html, /id="guest-resume-file" name="file" type="file"[^>]*required/);
   assert.match(html, /type="submit"[^>]*>첨부한 이력서로 계속/);
@@ -18,22 +18,22 @@ test('guest attachment permits uploading and continuing without an editor or pre
     /<script>|<textarea|contenteditable|<iframe|<object|resume-preview|resume-examples/,
   );
   assert.doesNotMatch(html, /disabled|전송하거나 읽지 않습니다|파일명만 확인/);
-  const attached = guestResumePage({ filename: '경험.pdf', resume_attached: true });
-  assert.match(attached, /첨부 완료 · 경험.pdf/);
+  const attached = guestResumePage({ filename: '경험.md', resume_attached: true });
+  assert.match(attached, /첨부 완료 · 경험.md/);
   assert.doesNotMatch(attached, /\brequired\b/);
 });
 
 test('guest file metadata validates 10MB and format without reading the file', () => {
   const file = {
-    name: '경험.PDF',
+    name: '경험.MD',
     size: 10 * 1024 * 1024,
     text: () => assert.fail('metadata validation must not read text'),
     arrayBuffer: () => assert.fail('metadata validation must not read bytes'),
   };
-  assert.equal(guestFileMetadata(file), '경험.PDF');
+  assert.equal(guestFileMetadata(file), '경험.MD');
   assert.equal(guestFileMetadata(null), '');
   assert.throws(() => guestFileMetadata({ ...file, size: file.size + 1 }), /10MB/);
-  assert.throws(() => guestFileMetadata({ name: 'wrong.html', size: 12 }), /PDF, DOCX, TXT/);
+  assert.throws(() => guestFileMetadata({ name: 'wrong.html', size: 12 }), /Markdown\(\.md\)/);
 });
 
 test('report gate contains only an empty inaccessible skeleton and explicit auth or discard actions', () => {

@@ -5,7 +5,6 @@ import { consumeAuthCallback, parseAuthCallback } from '../features/auth/auth-ca
 import { workspacePage } from '../pages/workspace.js';
 import { draftForPage, remainingEdits } from './workspace-state.js';
 import { createReportLoading } from '../features/analysis/report-loading.js';
-import { mountJourneyMotion } from '../features/analysis/journey-motion.js';
 import { requestFinalReport } from '../features/analysis/report-state.js';
 import { roleChoicesMarkup } from '../features/job-postings/job.js';
 import { catalogRoute } from '../features/job-postings/catalog-state.js';
@@ -18,6 +17,7 @@ import {
 import { jobsLoading } from '../pages/jobs.js';
 import { bindResumeExamples, stopResumeExamples } from '../features/resumes/examples.js';
 import { guestResumePage, guestFileMetadata } from '../features/resumes/guest.js';
+import { validateResumeFile } from '../features/resumes/file-preflight.js';
 import { opportunityRoute, opportunityPath } from '../features/job-postings/opportunity-state.js';
 import { opportunitiesPage } from '../pages/opportunities.js';
 import { bindOpportunities } from '../features/job-postings/opportunities.js';
@@ -53,70 +53,8 @@ let disposeOpportunities;
 let disposeIntroduction;
 let disposeReportGate;
 let guestExpiryTimer;
-let journeyMotion;
-let journeyObserver;
-
-function stopJourneyMotion() {
-  journeyObserver?.disconnect();
-  journeyObserver = undefined;
-  journeyMotion?.dispose();
-  journeyMotion = undefined;
-}
-
-function mountWorkflowJourney(page, isCatalog, isOpportunities) {
-  // Artwork follows the visible workflow step, never the presence of saved resume data.
-  const phase =
-    page === 'resume'
-      ? 'idle'
-      : page === 'desired-role'
-        ? 'elements'
-        : isCatalog || isOpportunities
-          ? 'orbit'
-          : null;
-  if (!phase) {
-    stopJourneyMotion();
-    return;
-  }
-  const main = document.getElementById('main');
-  if (!main) return;
-  let mountedHeading;
-  // The body-level canvas outlives route markup, including asynchronous catalog loading.
-  journeyMotion?.update({ phase });
-  const mount = () => {
-    const heading = main.querySelector(
-      '.page-heading, .posting-detail__header, .job-detail-heading',
-    );
-    if (!heading || heading === mountedHeading) return;
-    if (journeyMotion) journeyMotion.update({ phase, host: heading });
-    else journeyMotion = mountJourneyMotion(heading, { phase });
-    mountedHeading = heading;
-  };
-  mount();
-  // The catalog replaces its loading markup asynchronously; follow its real heading.
-  if (isCatalog) {
-    journeyObserver = new MutationObserver(mount);
-    journeyObserver.observe(main, { childList: true, subtree: true });
-  }
-}
-
-async function withResumeMotion(action) {
-  const revision = viewRevision;
-  journeyMotion?.update({ phase: 'uploading' });
-  try {
-    const result = await action();
-    if (revision === viewRevision) journeyMotion?.update({ phase: 'uploading' });
-    return result;
-  } catch (error) {
-    if (revision === viewRevision) journeyMotion?.update({ phase: 'idle' });
-    throw error;
-  }
-}
-
-function stopReportVisuals({ preserveLoading, preserveJourney = false } = {}) {
+function stopReportVisuals({ preserveLoading } = {}) {
   viewRevision += 1;
-  journeyObserver?.disconnect();
-  journeyObserver = undefined;
-  if (!preserveJourney) stopJourneyMotion();
   disposeIntroduction?.();
   disposeIntroduction = undefined;
   disposeReportGate?.();
@@ -204,7 +142,6 @@ async function selectPosting(posting) {
     });
   }
   const loading = createReportLoading({
-    journey: journeyMotion?.capture(),
     draft: {
       ...workspace.draft,
       analysis_mode: 'job_posting',
@@ -390,7 +327,7 @@ async function onSession(nextSession) {
 
 function render({ reportBridge } = {}) {
   if (!session) return;
-  stopReportVisuals({ preserveLoading: reportBridge, preserveJourney: !reportBridge });
+  stopReportVisuals({ preserveLoading: reportBridge });
   if (reportBridge) app.dataset.reportTransition = 'forming';
   stopCatalogLoad();
   stopResumeExamples();
@@ -600,9 +537,7 @@ function render({ reportBridge } = {}) {
       );
     }
   }
-  // Locate the first dot after the route's scroll reset, in its final viewport position.
   window.scrollTo({ top: 0, behavior: 'instant' });
-  if (!reportBridge) mountWorkflowJourney(page, Boolean(catalog), Boolean(opportunities));
   if (!reportBridge && (session.user || page !== 'result'))
     document.getElementById('main')?.focus({ preventScroll: true });
   if (reportBridge) {
@@ -798,10 +733,12 @@ function bindWorkflow() {
   bindForm('guest-upload-form', '이력서 첨부 중…', async (form) => {
     const file = form.get('file');
     if (file?.name) {
-      guestFileMetadata(file);
-      await withResumeMotion(async () => {
-        applyGuestWorkspace(await api('/guest/resume/upload', { method: 'POST', body: form }));
-      });
+      const revision = viewRevision;
+      await validateResumeFile(file);
+      if (revision !== viewRevision || session.user) return;
+      const result = await api('/guest/resume/upload', { method: 'POST', body: form });
+      if (revision !== viewRevision || session.user) return;
+      applyGuestWorkspace(result);
       edits = {};
     } else if (!workspace.draft.resume_attached) {
       throw new Error('분석할 이력서 파일을 먼저 선택해 주세요.');
@@ -821,12 +758,10 @@ function bindWorkflow() {
       requireLogin('resume');
       return;
     }
-    await withResumeMotion(async () => {
-      applyWorkspace(
-        await api('/resume', { method: 'PUT', body: { resume_text: form.get('resume_text') } }),
-        ['resume_text'],
-      );
-    });
+    applyWorkspace(
+      await api('/resume', { method: 'PUT', body: { resume_text: form.get('resume_text') } }),
+      ['resume_text'],
+    );
     if (selectedPosting) {
       if (guest.target)
         applyWorkspace(
@@ -851,11 +786,14 @@ function bindWorkflow() {
       return;
     }
     const file = form.get('file');
-    if (file.size > 10 * 1024 * 1024) throw new Error('파일은 10MB 이하로 선택해 주세요.');
-    await withResumeMotion(async () => {
-      applyWorkspace(await api('/resume/upload', { method: 'POST', body: form }), ['resume_text']);
-    });
-    navigationMessage = '이력서를 불러왔습니다. 추출한 내용을 확인하고 다음 단계로 진행해 주세요.';
+    const revision = viewRevision;
+    const owner = session.user.id;
+    await validateResumeFile(file);
+    if (revision !== viewRevision || owner !== session.user?.id) return;
+    const result = await api('/resume/upload', { method: 'POST', body: form });
+    if (revision !== viewRevision || owner !== session.user?.id) return;
+    applyWorkspace(result, ['resume_text']);
+    navigationMessage = 'Markdown 이력서를 불러왔습니다. 내용을 확인하고 다음 단계로 진행해 주세요.';
     render();
   });
   bindForm('job-form', '희망 직무 저장 중…', async (form) => {

@@ -1,12 +1,13 @@
-import { escapeHtml as e, icon } from '../shared/components/ui.js';
+import { escapeHtml as e, icon, renderPostingPhases } from '../shared/components/ui.js';
 import { jobEditor } from '../features/job-postings/job.js';
 
 export function desiredRolePage(draft) {
   return `
+    ${renderPostingPhases('role')}
     <div class="page-heading" data-page="desired-role">
       <div>
         <h1>희망하는 직무를 선택해 주세요.</h1>
-        <p>내 경험을 바탕으로, 앞으로 하고 싶은 일을 준비합니다.</p>
+        <p>채용공고를 살펴보기 전에 관심 직무를 선택해 주세요.</p>
       </div>
     </div>
     <div class="editor-layout">
@@ -29,7 +30,7 @@ export function desiredRolePage(draft) {
             <p>
               ${e(draft.filename || (draft.guest ? '선택한 파일이 없습니다.' : '직접 입력한 이력서'))}
               <br />
-              ${draft.guest ? '비회원도 분석까지 진행할 수 있어요. 결과 열람은 로그인 후 가능합니다.' : `${(draft.resume_text?.length || 0).toLocaleString('ko-KR')}자`}
+              ${draft.guest ? '공고를 선택한 뒤 로그인하면 실제 분석을 시작합니다.' : `${(draft.resume_text?.length || 0).toLocaleString('ko-KR')}자`}
             </p>
           </div>
         </div>

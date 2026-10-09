@@ -1,11 +1,4 @@
-import {
-  drawFixedAnchorFrame,
-  loadStudyArtwork,
-  studyRingOpacity,
-  studyRotation,
-} from './fixed-anchor-study.js';
-
-export const ANALYSIS_ENTRY_MS = 460;
+import { drawPupilFrame, pupilMotionFrame } from './pupil-motion.js';
 
 const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, value));
 const smooth = (value) => {
@@ -14,7 +7,7 @@ const smooth = (value) => {
 };
 const finite = (value, fallback) => (Number.isFinite(value) ? value : fallback);
 
-/** One viewport coordinate system for every workflow page and the modal's top layer. */
+// Retained for the historical journey previews, not used by the production pupil.
 export function liveMotionViewport(width, height) {
   const w = Math.max(1, finite(width, 1200));
   const h = Math.max(1, finite(height, 800));
@@ -33,65 +26,6 @@ export function liveMotionViewport(width, height) {
     offsetX: centerX - 600 * scale,
     offsetY: centerY - 245 * scale,
     stageBottom: centerY + 196 * scale + 32,
-  };
-}
-
-/** Keep the captured pupil fixed even when opening the modal removes a scrollbar. */
-export function liveAnalysisViewport(width, height, snapshot) {
-  const current = liveMotionViewport(width, height);
-  const captured = snapshot?.frame;
-  if (
-    !captured ||
-    snapshot.viewportWidth !== width ||
-    snapshot.viewportHeight !== height ||
-    !['centerX', 'centerY', 'radius', 'scale', 'offsetX', 'offsetY', 'stageBottom'].every((key) =>
-      Number.isFinite(captured[key]),
-    ) ||
-    captured.scale <= 0 ||
-    captured.radius <= 0
-  ) {
-    return current;
-  }
-  return { ...current, ...captured, width, height };
-}
-
-/** First clear the page behind the ring, then accelerate and draw the eye. */
-export function liveEyeChoreography(
-  elapsed,
-  {
-    initialTime = 10.4,
-    initialRotation = studyRotation(10.4),
-    active = true,
-    readyAt = 4000,
-    reduced = false,
-  } = {},
-) {
-  const initial = clamp(initialTime, 0, 10.4);
-  const gatherMs = initial < 9.5 ? Math.min(900, (10.4 - initial) * 170) : 0;
-  const entryMs = reduced ? 0 : Math.max(ANALYSIS_ENTRY_MS, gatherMs);
-  const time = Math.max(0, active ? elapsed : readyAt);
-  const entering = time < entryMs;
-  const gathering = time < gatherMs;
-  const sceneTime =
-    reduced || !active
-      ? 18
-      : entering
-        ? gathering
-          ? initial + (10.4 - initial) * smooth(time / gatherMs)
-          : 10.4
-        : 12 + 6 * clamp((time - entryMs) / (4000 - entryMs));
-  const rotation =
-    initialRotation +
-    (reduced
-      ? 0
-      : Math.min(time, entryMs) * 0.00062 +
-        studyRotation(12 + Math.max(0, time - entryMs) / 1000) -
-        studyRotation(12));
-  return {
-    entering,
-    sceneTime,
-    rotation,
-    reflection: active ? (entering ? studyRingOpacity(sceneTime) : 1) : 0,
   };
 }
 
@@ -132,144 +66,110 @@ export class LiveAnalysisClock {
   }
 }
 
-/** Same v8 painter, with real request completion replacing the preview's fixed timer. */
-export function mountLiveAnalysisEye(host, { snapshot, onProgress } = {}) {
+/** A bounded original pupil canvas. The accessible percentage lives below it in the modal. */
+export function mountLiveAnalysisEye(host, { onProgress } = {}) {
   const element = document.createElement('div');
   element.className = 'live-analysis-motion';
-  element.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:1;';
   const canvas = document.createElement('canvas');
-  canvas.style.cssText = 'display:block;width:100%;height:100%;pointer-events:none;';
-  canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', '이력서와 채용공고를 분석하고 있습니다.');
+  canvas.className = 'live-analysis-scene';
+  canvas.setAttribute('aria-hidden', 'true');
   element.append(canvas);
-  // A separate measured eye rectangle gives the existing report transition its real source.
-  const scene = document.createElement('div');
-  scene.className = 'live-analysis-scene';
-  scene.style.cssText = 'position:fixed;pointer-events:none;';
-  scene.setAttribute('aria-hidden', 'true');
-  element.append(scene);
   host.replaceChildren(element);
   const context = canvas.getContext('2d');
+  if (!context) {
+    element.remove();
+    throw new Error('Analysis graphics are unavailable.');
+  }
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
   const started = performance.now();
   const clock = new LiveAnalysisClock();
-  const seed = finite(snapshot?.seed, 7);
-  const initialRotation = finite(snapshot?.rotation, studyRotation(10.4));
-  const initialTime = clamp(finite(snapshot?.time, 10.4), 0, 10.4);
-  let viewport;
+  let size = 320;
   let disposed = false;
   let raf = 0;
+  let progressTimer;
   let finishTimer;
   let lastPercent = -1;
+  let hiddenAt = document.hidden ? started : null;
+  let hiddenDuration = 0;
   let resolveSettled;
   const settled = new Promise((resolve) => {
     resolveSettled = resolve;
   });
 
+  function motionElapsed(now) {
+    return Math.max(0, (hiddenAt ?? now) - started - hiddenDuration);
+  }
   function render(now = performance.now()) {
     if (disposed) return;
-    const elapsed = Math.max(0, now - started);
-    const loading = clock.frame(elapsed);
-    const choreography = liveEyeChoreography(elapsed, {
-      initialTime,
-      initialRotation,
-      active: loading.active,
-      readyAt: clock.readyAt,
-      reduced: reduced.matches,
-    });
-    const { entering, rotation, sceneTime, reflection } = choreography;
-    if (context) {
+    const loading = clock.frame(Math.max(0, now - started));
+    const frame = pupilMotionFrame(motionElapsed(now), { reduced: reduced.matches });
+    if (!document.hidden) {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawFixedAnchorFrame(context, viewport.width, viewport.height, {
-        time: sceneTime,
-        seed,
-        layout: viewport,
-        rotation,
-        origin: snapshot?.origin,
-        journeyGeometry: snapshot?.journeyGeometry,
-        loading: {
-          ...loading,
-          percent: entering ? null : loading.percent,
-          rotation,
-          reflection,
-        },
-      });
+      drawPupilFrame(context, size, frame);
     }
     element.dataset.percent = String(loading.percent);
     element.dataset.loading = String(loading.active);
-    element.dataset.centerX = String(viewport.centerX);
-    element.dataset.centerY = String(viewport.centerY);
-    element.dataset.radius = String(viewport.radius);
-    element.dataset.rotation = String(rotation);
-    element.dataset.stage = entering ? 'entry' : 'analysis';
-    element.dataset.sceneTime = String(sceneTime);
+    element.dataset.rotation = String(frame.rotation);
+    element.dataset.stage = frame.scale < 1 ? 'entry' : 'analysis';
     if (lastPercent !== loading.percent) {
       lastPercent = loading.percent;
-      canvas.setAttribute(
-        'aria-label',
-        `분석 진행 ${loading.percent}%. 중간 진행률은 시각적 안내입니다.`,
-      );
       onProgress?.(loading.percent);
     }
   }
   function resize() {
-    viewport = liveAnalysisViewport(window.innerWidth, window.innerHeight, snapshot);
+    if (disposed) return;
+    size = Math.max(120, Math.min(360, element.clientWidth || 320));
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = Math.round(viewport.width * dpr);
-    canvas.height = Math.round(viewport.height * dpr);
-    const content = host.closest('.report-loading-content') || host;
-    content.style.setProperty('--live-eye-stage-bottom', `${viewport.stageBottom}px`);
-    const s = viewport.scale;
-    Object.assign(scene.style, {
-      left: `${viewport.centerX - 478 * s}px`,
-      top: `${viewport.centerY - 183 * s}px`,
-      width: `${981 * s}px`,
-      height: `${379 * s}px`,
-    });
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
     render();
+  }
+  function stopDrawing() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    clearTimeout(progressTimer);
   }
   function tick() {
     raf = 0;
     if (disposed || document.hidden) return;
     render();
-    if (clock.frame(performance.now() - started).active) raf = requestAnimationFrame(tick);
+    if (!clock.frame(performance.now() - started).active) return;
+    // Reduced motion still reports progress, without a continuous animation loop.
+    if (reduced.matches) progressTimer = setTimeout(tick, 250);
+    else raf = requestAnimationFrame(tick);
   }
   function refresh() {
-    if (raf) cancelAnimationFrame(raf);
-    raf = 0;
+    stopDrawing();
     if (disposed) return;
-    render();
-    if (!document.hidden) raf = requestAnimationFrame(tick);
+    const now = performance.now();
+    if (document.hidden && hiddenAt === null) hiddenAt = now;
+    if (!document.hidden && hiddenAt !== null) {
+      hiddenDuration += now - hiddenAt;
+      hiddenAt = null;
+    }
+    if (!document.hidden) tick();
   }
   function complete() {
     if (disposed || clock.completedAt !== null) return;
     const elapsed = performance.now() - started;
     clock.complete(elapsed);
-    finishTimer = setTimeout(
-      () => {
-        if (disposed) return;
-        render(started + clock.readyAt);
-        if (raf) cancelAnimationFrame(raf);
-        raf = 0;
-        resolveSettled();
-      },
-      Math.max(0, clock.readyAt - elapsed) + 120,
-    );
+    finishTimer = setTimeout(() => {
+      if (disposed) return;
+      render();
+      stopDrawing();
+      resolveSettled();
+    }, Math.max(0, clock.readyAt - elapsed) + 40);
     refresh();
   }
   window.addEventListener('resize', resize);
   document.addEventListener('visibilitychange', refresh);
   reduced.addEventListener('change', refresh);
   resize();
-  loadStudyArtwork().then(refresh, () => {
-    element.dataset.artworkError = 'true';
-    refresh();
-  });
   refresh();
   return {
     element,
-    scene,
+    scene: canvas,
     complete,
     update(value) {
       if (value?.complete) complete();
@@ -281,13 +181,10 @@ export function mountLiveAnalysisEye(host, { snapshot, onProgress } = {}) {
       complete();
       return settled;
     },
-    capture() {
-      return { ...viewport, seed, ...clock.frame(performance.now() - started) };
-    },
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (raf) cancelAnimationFrame(raf);
+      stopDrawing();
       clearTimeout(finishTimer);
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', refresh);

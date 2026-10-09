@@ -4,7 +4,7 @@ import { playReportTransition } from '../../shared/motion/report-transition.js';
 
 // A native modal prevents changes while the selected posting is analyzed.
 // Explicit cancellation can return to that posting from any starting page.
-export function createReportLoading({ draft, onCancel, journey }) {
+export function createReportLoading({ draft, onCancel }) {
   const abort = new AbortController();
   const { signal } = abort;
   const dialog = document.createElement('dialog');
@@ -14,14 +14,6 @@ export function createReportLoading({ draft, onCancel, journey }) {
   dialog.setAttribute('tabindex', '-1');
   dialog.innerHTML = `
     <div class="report-loading-content">
-      <div class="report-loading-heading">
-        <h2 id="report-loading-title">경험을 하나의 보고서로 정리하고 있어요.</h2>
-        <p id="report-loading-description">
-          ${draft.analysis_mode === 'job_posting' ? '이력서와 선택한 채용공고를 함께 살펴봅니다.' : '이력서와 희망 직무를 함께 살펴봅니다.'}
-        </p>
-        <p class="report-loading-progress-note">진행률은 시각적 진행이며, 항목별 평가 결과가 아닙니다.</p>
-        <p data-evaluation-status role="status" aria-live="polite"></p>
-      </div>
       <div
         class="report-loading-eye"
         role="progressbar"
@@ -36,6 +28,15 @@ export function createReportLoading({ draft, onCancel, journey }) {
           분석을 준비하고 있습니다.
         </p>
       </div>
+      <p class="report-loading-percent" data-loading-percent aria-hidden="true">0%</p>
+      <div class="report-loading-heading">
+        <h2 id="report-loading-title">경험을 하나의 보고서로 정리하고 있어요.</h2>
+        <p id="report-loading-description">
+          ${draft.analysis_mode === 'job_posting' ? '이력서와 선택한 채용공고를 함께 살펴봅니다.' : '이력서와 희망 직무를 함께 살펴봅니다.'}
+        </p>
+        <p class="report-loading-progress-note">진행률은 시각적 진행이며, 항목별 평가 결과가 아닙니다.</p>
+        <p data-evaluation-status role="status" aria-live="polite"></p>
+      </div>
       <button
         type="button"
         class="report-loading-return">
@@ -44,6 +45,7 @@ export function createReportLoading({ draft, onCancel, journey }) {
     </div>
   `;
   const host = dialog.querySelector('[data-report-eye]');
+  const percentage = dialog.querySelector('[data-loading-percent]');
   const evaluationStatus = dialog.querySelector('[data-evaluation-status]');
   const back = dialog.querySelector('button');
   const focused = document.activeElement;
@@ -112,16 +114,14 @@ export function createReportLoading({ draft, onCancel, journey }) {
     try {
       signal.throwIfAborted();
       startedAt = performance.now();
-      // The fixed ring stays visible while the page clears to white behind it.
-      // Its brief entry hold ends before acceleration and the eye strokes begin.
-      // Graphics loading and drawing never hold up the actual analysis request.
+      // The pupil grows from nothing as the page clears to white. Graphics loading
+      // and drawing never hold up the actual analysis request.
       const visual = import('./live-eye-motion.js')
         .catch(() => null)
         .then((module) => {
           if (signal.aborted || !module) return;
           try {
             eye = module.mountLiveAnalysisEye(host, {
-              snapshot: journey,
               onProgress(value) {
                 if (signal.aborted) return;
                 const percent = Math.min(
@@ -130,6 +130,7 @@ export function createReportLoading({ draft, onCancel, journey }) {
                 );
                 host.setAttribute('aria-valuenow', String(percent));
                 host.setAttribute('aria-valuetext', `${percent}% · 시각적 진행률`);
+                percentage.textContent = `${percent}%`;
               },
             });
           } catch {
@@ -155,6 +156,7 @@ export function createReportLoading({ draft, onCancel, journey }) {
       });
       host.setAttribute('aria-valuenow', '100');
       host.setAttribute('aria-valuetext', '100% · 보고서 분석 완료');
+      percentage.textContent = '100%';
       host.setAttribute('aria-busy', 'false');
       analysisComplete = true;
       return result;

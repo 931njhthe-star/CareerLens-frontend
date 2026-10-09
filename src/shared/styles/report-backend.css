@@ -1,4 +1,19 @@
 /* Actual backend results stay inside the selected studio report composition. */
+.report-save-control {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 30ch;
+}
+
+.report-save-control small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
 .report-backend {
   min-width: 0;
   border-top: 1px solid var(--line);
