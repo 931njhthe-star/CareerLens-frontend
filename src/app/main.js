@@ -1,6 +1,7 @@
-import { api, getSession, setSession } from '../shared/api/client.js';
+import { api, getSession, setSession, completeAuthCallback } from '../shared/api/client.js';
 import { shell, notice, pending, bindCounters, escapeHtml } from '../shared/components/ui.js';
 import { renderAuth, bindAuth } from '../features/auth/auth.js';
+import { consumeAuthCallback, parseAuthCallback } from '../features/auth/auth-callback.js';
 import { workspacePage } from '../pages/workspace.js';
 import { draftForPage, remainingEdits } from './workspace-state.js';
 import { createReportLoading } from '../features/analysis/report-loading.js';
@@ -950,7 +951,10 @@ function bindWorkflow() {
   );
 }
 
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => {
+  if (parseAuthCallback(location.hash)) void start();
+  else render();
+});
 window.addEventListener('pagehide', () => {
   stopReportVisuals();
   stopCatalogLoad();
@@ -967,8 +971,25 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 async function start() {
+  const callback = consumeAuthCallback(location, history);
+  let callbackSession;
+  let callbackMessage;
+  let callbackFailed = false;
   try {
-    session = await getSession();
+    if (callback?.kind === 'error') {
+      callbackMessage = callback.message;
+      callbackFailed = true;
+    } else if (callback?.kind === 'session') {
+      try {
+        callbackSession = await completeAuthCallback(callback);
+        callbackMessage = '이메일 인증을 확인했습니다. 로그인되었습니다.';
+      } catch {
+        callbackFailed = true;
+        callbackMessage =
+          '이메일 인증 정보로 로그인하지 못했습니다. 기존 로그인 상태는 유지됩니다. 이메일로 다시 로그인해 주세요.';
+      }
+    }
+    session = callbackSession || (await getSession());
     if (session.user) {
       const claimed = await claimCompletedGuest();
       if (!['claimed', 'prepared'].includes(claimed)) await loadWorkspace();
@@ -980,6 +1001,12 @@ async function start() {
         );
     } else applyGuestWorkspace(await api('/guest/workspace'));
     render();
+    if (callbackMessage)
+      notice(
+        callbackMessage,
+        callbackFailed ? 'error' : 'success',
+        document.getElementById('auth-notices') || document.getElementById('notices'),
+      );
   } catch (error) {
     app.innerHTML = `
       <main

@@ -551,8 +551,12 @@ function makeSession(user = null) {
 
 async function backendUser(request, signal) {
   const profile = await request('/me', { signal });
+  return profileUser(profile, request.ApiError);
+}
+
+function profileUser(profile, ApiError) {
   const id = profile.user_id || profile.id;
-  if (!id) error(request.ApiError, '로그인한 계정을 확인하지 못했습니다.', 502, 'profile_invalid');
+  if (!id) error(ApiError, '로그인한 계정을 확인하지 못했습니다.', 502, 'profile_invalid');
   const label = [profile.display_name, profile.name, profile.email].find(
     (value) => typeof value === 'string' && value.trim(),
   );
@@ -858,6 +862,29 @@ function sessionMockWorkspace() {
 
 export function enableBackendAdapter() {
   enabled = true;
+}
+
+export async function acceptBackendAuthCallback({ accessToken, refreshToken }, request, ApiError) {
+  if (
+    typeof accessToken !== 'string' ||
+    !accessToken ||
+    typeof refreshToken !== 'string' ||
+    !refreshToken
+  )
+    error(
+      ApiError,
+      '이메일 인증 정보가 완전하지 않습니다. 다시 로그인해 주세요.',
+      400,
+      'auth_callback_invalid',
+    );
+  // Validate the new identity before replacing a working session or its guest binding.
+  const profile = await request('/me', { auth: false, accessToken });
+  const user = profileUser(profile, ApiError);
+  sessionStorage.setItem(ACCESS_KEY, accessToken);
+  sessionStorage.setItem(REFRESH_KEY, refreshToken);
+  storageRemove(DEMO_SESSION_KEY);
+  enabled = true;
+  return makeSession({ id: user.id, email: user.email || '', name: user.name });
 }
 
 export function enableDemoSession() {

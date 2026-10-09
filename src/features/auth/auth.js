@@ -276,6 +276,17 @@ export function renderAuth(page, session, draft = {}) {
               id="auth-notices"
               aria-live="polite"></div>
             ${form}
+            ${
+              page === 'signup'
+                ? `
+              <div id="auth-confirmation" class="auth-confirmation" hidden>
+                <p>가장 최근에 받은 인증 메일의 링크를 한 번만 열어 주세요. 인증 후 이 창으로 돌아와 로그인하면 첨부한 이력서를 이어서 사용할 수 있어요.</p>
+                <p>메일이 없거나 링크가 만료되었다면 서비스 담당자에게 새 인증 메일을 요청해 주세요.</p>
+                <a class="button auth-primary" href="#/email">이메일로 로그인</a>
+              </div>
+            `
+                : ''
+            }
           </div>
           <aside class="auth-preview">
             <span class="preview-label">가능성을 발견하는 순간</span>
@@ -348,14 +359,16 @@ export function bindAuth({ onSession, resetToken, navigate }) {
         const result = await api(`/auth/${action}`, { method: 'POST', body });
         if (
           action === 'register' &&
-          Object.hasOwn(result, 'access_token') &&
-          !result.access_token
+          (result.email_confirmation_required === true ||
+            (Object.hasOwn(result, 'access_token') && !result.access_token))
         ) {
           notice(
-            '가입한 이메일의 인증 안내를 확인한 뒤 로그인해 주세요.',
+            '이메일 인증을 기다리고 있습니다. 이미 인증한 계정이면 바로 로그인해 주세요.',
             'info',
             document.getElementById('auth-notices'),
           );
+          const confirmation = document.getElementById('auth-confirmation');
+          if (confirmation) confirmation.hidden = false;
           return;
         }
         if (['login', 'register'].includes(action)) {
@@ -381,7 +394,17 @@ export function bindAuth({ onSession, resetToken, navigate }) {
           );
         }
       } catch (error) {
-        notice(error.message, 'error', document.getElementById('auth-notices'));
+        notice(
+          action === 'register'
+            ? `${error.message} 이미 인증한 계정이라면 이메일로 로그인해 주세요.`
+            : error.message,
+          'error',
+          document.getElementById('auth-notices'),
+        );
+        if (action === 'register') {
+          const confirmation = document.getElementById('auth-confirmation');
+          if (confirmation) confirmation.hidden = false;
+        }
       }
     });
   });

@@ -4,6 +4,7 @@ import {
   enableDemoSession,
   isDemoSessionEnabled,
   isBackendAdapterEnabled,
+  acceptBackendAuthCallback,
 } from './backend-adapter.js';
 
 let csrfToken = '';
@@ -33,12 +34,14 @@ export async function api(path, { method = 'GET', body, signal, onProgress, keep
 
 async function requestApi(
   path,
-  { method = 'GET', body, signal, auth = true, keepalive } = {},
+  { method = 'GET', body, signal, auth = true, keepalive, accessToken } = {},
   retry = true,
 ) {
   const headers = { Accept: 'application/json' };
   if (!['GET', 'HEAD'].includes(method)) headers['X-CSRF-Token'] = csrfToken;
-  if (auth && isBackendAdapterEnabled()) {
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  } else if (auth && isBackendAdapterEnabled()) {
     const token = sessionStorage.getItem('careerlens.backend.access-token');
     if (token) headers.Authorization = `Bearer ${token}`;
   }
@@ -123,4 +126,10 @@ export async function getSession() {
 
 export function startDemoSession() {
   enableDemoSession();
+}
+
+export async function completeAuthCallback(credentials) {
+  const session = await acceptBackendAuthCallback(credentials, requestApi, ApiError);
+  setSession(session);
+  return session;
 }
