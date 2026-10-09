@@ -213,7 +213,7 @@ export function shell(content, { user, draft = {}, page = 'resume' } = {}) {
         class="brand"
         href="#/intro"
         aria-label="CareerLens 처음으로">
-        <span class="brand-symbol">${icon('lens', 23)}</span>
+        <img class="brand-symbol" src="/public/brand-eye.svg" width="34" height="34" alt="" aria-hidden="true">
         Career<b>Lens</b>
       </a>
       ${renderPrimaryNav(page, draft)}

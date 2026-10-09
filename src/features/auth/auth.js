@@ -256,7 +256,7 @@ export function renderAuth(page, session, draft = {}) {
         <a
           class="brand"
           href="#/intro">
-          <span class="brand-symbol">${icon('lens', 23)}</span>
+          <img class="brand-symbol" src="/public/brand-eye.svg" width="34" height="34" alt="" aria-hidden="true">
           Career<b>Lens</b>
         </a>
         ${renderPrimaryNav(page, draft)}

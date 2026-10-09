@@ -816,13 +816,10 @@ button:disabled {
   color: var(--green);
 }
 .brand-symbol {
-  display: grid;
-  place-items: center;
+  display: block;
+  flex-shrink: 0;
   width: 34px;
   height: 34px;
-  background: var(--green);
-  border-radius: 9px;
-  color: white;
 }
 .workspace-name {
   padding-left: 25px;
