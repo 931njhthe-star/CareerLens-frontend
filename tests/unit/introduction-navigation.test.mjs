@@ -115,7 +115,7 @@ test('workflow links require the relevant data, including a posting before pract
   const draft = { resume_text: '경력', career_target: { role_id: 'developer' } };
   const beforeSelection = workflowLinks(draft);
   assert.equal(beforeSelection.length, 2);
-  assert.match(beforeSelection[1], /^opportunities\?role_id=developer&amp;label=&amp;page=1$/);
+  assert.match(beforeSelection[1], /^opportunities\?role_id=developer&amp;label=&amp;scope=category&amp;page=1$/);
   assert.ok(!beforeSelection.includes('practice'));
   for (const ready of [
     { selected_posting_id: 'posting-1' },

@@ -247,10 +247,6 @@ async function demoApi(path, options, ApiError, catalog) {
   if (cleanPath === '/job-postings' && method === 'GET') {
     const available = [...catalog.postings, ...mockPostings, ...customPostings()];
     const params = new URLSearchParams(path.split('?')[1] || '');
-    if (params.get('role_id') && params.get('role_id') !== 'custom') {
-      const selectedRole = catalog.roles.find((role) => role.id === params.get('role_id'));
-      if (selectedRole) params.set('role', selectedRole.label);
-    }
     if (params.get('role_id')) {
       const label =
         params.get('role_id') === 'custom'
@@ -267,6 +263,7 @@ async function demoApi(path, options, ApiError, catalog) {
         });
       }
     }
+    const roleScope = applyPostingRoleScope(params, catalog.roles);
     const items = filteredPostings(available, params);
     const page = Math.max(1, Number(params.get('page')) || 1);
     const pageSize = Math.max(1, Number(params.get('page_size')) || 12);
@@ -276,12 +273,14 @@ async function demoApi(path, options, ApiError, catalog) {
     return {
       items: selected,
       total: postings.length,
+      available_total: available.length,
+      ...roleScope,
       page,
       page_size: pageSize,
       filters: {
-        roles: [...new Set(available.map((item) => item.role).filter(Boolean))].sort((a, b) =>
-          a.localeCompare(b, 'ko'),
-        ),
+        roles: [
+          ...new Set(available.map((item) => item.role_category || item.role).filter(Boolean)),
+        ].sort((a, b) => a.localeCompare(b, 'ko')),
         locations: [...new Set(available.map((item) => item.location))],
         employment_types: [...new Set(available.map((item) => item.employment_type))],
         experience_levels: [...new Set(available.map((item) => item.experience_level))],
@@ -418,6 +417,7 @@ function mapJob(posting, companyName = '', catalogPostings = []) {
     company:
       local?.company || companyName || posting.company_name || posting.company || '기업 정보 없음',
     role: local?.role || posting.title,
+    role_category: local?.role_category || '',
     title: local?.title || posting.title,
     location: local?.location || posting.location || '근무지 협의',
     employment_type: local?.employment_type || posting.employment_type || '정보 없음',
@@ -459,17 +459,47 @@ function mockPosting(id, catalogPostings = []) {
   );
 }
 
+// Scope changes only browsing. The selected backend posting ID remains unchanged.
+function applyPostingRoleScope(params, roles) {
+  const selectedRole = roles.find((role) => role.id === params.get('role_id') && role.id !== 'custom');
+  if (selectedRole) params.set('role', selectedRole.label);
+  if (!params.has('role_scope')) return {};
+
+  const requested = params.get('role_scope');
+  const scope = ['category', 'exact', 'all'].includes(requested) ? requested : 'category';
+  const category = selectedRole?.role_category || '';
+  const categoryUnavailable = scope === 'category' && selectedRole && !category;
+  // Older local servers may not expose the optional source taxonomy yet.
+  // Keep all postings visible instead of silently reverting to one exact title.
+  if (scope === 'all' || categoryUnavailable) {
+    params.delete('role');
+  } else if (scope === 'category' && category) {
+    params.delete('role');
+    params.set('role_category', category);
+  } else if (selectedRole) {
+    params.delete('role');
+    params.set('role_exact', selectedRole.label);
+  }
+  // Free-text roles keep keyword matching when no source classification is available.
+  return {
+    role_scope: categoryUnavailable ? 'all' : scope === 'category' && !category ? 'exact' : scope,
+    role_category: category,
+  };
+}
+
 function filteredPostings(items, params) {
   const q = (params.get('q') || '').toLocaleLowerCase();
   const role = (params.get('role') || '').toLocaleLowerCase();
   const roleCategory = params.get('role_category') || '';
+  const exactRole = params.get('role_exact') || '';
   const filters = ['location', 'employment_type', 'experience_level', 'skill'];
   let result = items.filter((posting) => {
     const text =
       `${posting.company} ${posting.role} ${posting.description} ${posting.skills.join(' ')}`.toLocaleLowerCase();
     return (
       (!q || text.includes(q)) &&
-      (!roleCategory || posting.role === roleCategory) &&
+      (!roleCategory || posting.role_category === roleCategory || posting.role === roleCategory) &&
+      (!exactRole || posting.role === exactRole) &&
       (!role || `${posting.role} ${posting.description}`.toLocaleLowerCase().includes(role)) &&
       filters.every((key) => {
         const value = params.get(key);
@@ -1227,10 +1257,7 @@ export async function backendApi(path, options, request, ApiError) {
         ? await backendJobs(request, catalog.postings, signal)
         : [...catalog.postings];
       const params = new URLSearchParams(path.split('?')[1] || '');
-      if (params.get('role_id') && params.get('role_id') !== 'custom') {
-        const selectedRole = catalog.roles.find((role) => role.id === params.get('role_id'));
-        if (selectedRole) params.set('role', selectedRole.label);
-      }
+      const roleScope = applyPostingRoleScope(params, catalog.roles);
       const filtered = filteredPostings(available, params);
       const page = Math.max(1, Number(params.get('page')) || 1);
       const pageSize = Math.max(1, Number(params.get('page_size')) || 12);
@@ -1238,12 +1265,14 @@ export async function backendApi(path, options, request, ApiError) {
       return {
         items,
         total: filtered.length,
+        available_total: available.length,
+        ...roleScope,
         page,
         page_size: pageSize,
         filters: {
-          roles: [...new Set(available.map((item) => item.role).filter(Boolean))].sort((a, b) =>
-            a.localeCompare(b, 'ko'),
-          ),
+          roles: [
+            ...new Set(available.map((item) => item.role_category || item.role).filter(Boolean)),
+          ].sort((a, b) => a.localeCompare(b, 'ko')),
           locations: [...new Set(available.map((item) => item.location))],
           employment_types: [...new Set(available.map((item) => item.employment_type))],
           experience_levels: [...new Set(available.map((item) => item.experience_level))],

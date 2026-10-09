@@ -151,7 +151,7 @@ test('registered Markdown jobs replace local mock duplicates and keep the backen
   assert.match(workspace.draft.job_text, /원본 업무 설명/);
 });
 
-test('job classification filters registered roles exactly and preserves backend identities', async () => {
+test('legacy title classification links still filter exactly and preserve backend identities', async () => {
   sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');
   const sources = [sourceMarkdown('001', '데이터 분석'), sourceMarkdown('002', '데이터 분석 플랫폼 개발')];
   const jobs = sources.map((source, index) => ({
@@ -179,6 +179,61 @@ test('job classification filters registered roles exactly and preserves backend 
   assert.deepEqual(empty.items, []);
   assert.deepEqual(empty.filters.roles, result.filters.roles);
 });
+
+for (const authenticated of [false, true]) {
+  test(`${authenticated ? 'registered' : 'preview'} jobs can browse source classification, exact role and all jobs`, async () => {
+    if (authenticated) sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');
+    const sources = [
+      { ...sourceMarkdown('001', '모델 서빙 최적화'), role_category: '플랫폼·서빙' },
+      { ...sourceMarkdown('002', '추론 플랫폼'), role_category: '플랫폼·서빙' },
+      { ...sourceMarkdown('003', '검색 엔지니어'), role_category: 'RAG·데이터' },
+      sourceMarkdown('004', '새로운 직무'),
+    ];
+    // A mention in the description must not make an exact-role match.
+    sources[2].content += '\n모델 서빙 최적화 협업';
+    const jobs = sources.map((source, index) => ({
+      id: `registered-${index + 1}`,
+      title: '등록 공고',
+      source_name: 'local_markdown',
+      source_external_id: source.filename,
+    }));
+    const request = async (path) => {
+      if (path === '/local-data/career-markdown') return { items: sources };
+      if (path === '/jobs?limit=100' && authenticated) return jobs;
+      throw new Error(`Unexpected call: ${path}`);
+    };
+    const list = (query) => backendApi(`/job-postings?${query}`, {}, request, ApiError);
+    const category = await list('role_id=role-001&role_scope=category');
+    assert.equal(category.total, 2);
+    assert.equal(category.available_total, 4);
+    assert.equal(category.role_scope, 'category');
+    assert.equal(category.role_category, '플랫폼·서빙');
+    assert.deepEqual(category.items.map((item) => item.id), authenticated
+      ? ['registered-1', 'registered-2'] : ['backup-001', 'backup-002']);
+    assert.ok(category.filters.roles.includes('플랫폼·서빙'));
+    assert.ok(!category.filters.roles.includes('모델 서빙 최적화'));
+
+    const exact = await list('role_id=role-001&role_scope=exact');
+    assert.equal(exact.total, 1);
+    assert.equal(exact.items[0].source_external_id, '001.md');
+    const all = await list('role_id=role-001&role_scope=all&page_size=2&page=2');
+    assert.equal(all.total, 4);
+    assert.equal(all.role_scope, 'all');
+    assert.deepEqual(all.items.map((item) => item.source_external_id), ['003.md', '004.md']);
+
+    const fromCatalog = await list(`role_category=${encodeURIComponent('플랫폼·서빙')}`);
+    assert.equal(fromCatalog.total, 2);
+    const missingCategory = await list('role_id=role-004&role_scope=category');
+    assert.equal(missingCategory.total, 4);
+    assert.equal(missingCategory.role_scope, 'all');
+    assert.equal(missingCategory.role_category, '');
+    const custom = await list(`role_id=custom&role=${encodeURIComponent('서빙')}&role_scope=all`);
+    assert.equal(custom.total, 4);
+    const keyword = await list(`role_id=custom&role=${encodeURIComponent('서빙')}&role_scope=category`);
+    assert.equal(keyword.role_scope, 'exact');
+    assert.equal(keyword.total, 2);
+  });
+}
 
 test('a filename shared by another source cannot borrow a local fixture identity or content', async () => {
   sessionStorage.setItem('careerlens.backend.access-token', 'fixture-token');

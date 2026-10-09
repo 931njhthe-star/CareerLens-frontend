@@ -155,6 +155,58 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.json["error"]["code"], "career_markdown_unavailable")
             self.assertNotIn(directory, response.get_data(as_text=True))
 
+    def test_local_catalog_attaches_source_taxonomy_by_matching_number_and_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for filename in ("003.md", "008.md", "009.md"):
+                (root / filename).write_text("공고 " + filename, encoding="utf-8")
+            (root / "00_목록.md").write_text(
+                "# 원본 직무 분류\n"
+                "| 번호 | 회사 | 직무 유형 | 파일 |\n"
+                "|---:|---|---|---|\n"
+                "| 003 | A | 플랫폼·서빙 | [003.md](003.md) |\n"
+                "| 008 | B | 플랫폼·서빙 | [008.md](008.md) |\n"
+                "| 009 | C | RAG·데이터 | [009.md](009.md) |\n",
+                encoding="utf-8-sig",
+            )
+            result = server.load_career_markdown(root)
+            self.assertEqual(len(result["items"]), 3)
+            self.assertEqual(
+                [(item["filename"], item["role_category"]) for item in result["items"]],
+                [("003.md", "플랫폼·서빙"), ("008.md", "플랫폼·서빙"), ("009.md", "RAG·데이터")],
+            )
+            self.assertEqual(result["items"][1]["content"], "공고 008.md")
+
+    def test_local_catalog_keeps_legacy_items_when_source_index_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "008.md").write_text("공고", encoding="utf-8")
+            self.assertEqual(
+                server.load_career_markdown(root),
+                {"items": [{"id": "008", "filename": "008.md", "content": "공고"}]},
+            )
+
+    def test_local_catalog_ignores_malformed_or_mismatched_taxonomy_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for filename in ("008.md", "009.md"):
+                (root / filename).write_text("공고", encoding="utf-8")
+            (root / "00_목록.md").write_text(
+                "| 번호 | 직무 유형 | 파일 |\n"
+                "|---|---|---|\n"
+                "| 008 | 잘못 연결된 분류 | [008.md](009.md) |\n"
+                "| 008 | 외부 파일 | [008.md](../008.md) |\n"
+                "| 008 | 외부 URL | [008.md](https://example.com/008.md) |\n"
+                "| 008 | | [008.md](008.md) |\n"
+                "| 잘못된 번호 | 분류 | [008.md](008.md) |\n"
+                "| 008 | 빠진 링크 |\n"
+                "| 009 | RAG·데이터 | [009.md](009.md) |\n",
+                encoding="utf-8",
+            )
+            items = server.load_career_markdown(root)["items"]
+            self.assertNotIn("role_category", items[0])
+            self.assertEqual(items[1]["role_category"], "RAG·데이터")
+
     def test_resume_conversion_handles_markdown_and_legacy_korean_text_without_upstream(self):
         opener = Opener(error=AssertionError("Conversion must not contact API"))
         app = self.app("http://127.0.0.1:5301", opener)

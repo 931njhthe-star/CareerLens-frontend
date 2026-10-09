@@ -33,6 +33,38 @@ def career_postings_directory():
     return ROOT.parent / "CareerLens-backend" / "app" / "modules" / "job_postings"
 
 
+def career_posting_categories(directory):
+    """Read optional source taxonomy without following Markdown links or changing fixtures."""
+    index = directory / "00_목록.md"
+    if not index.is_file() or index.is_symlink():
+        return {}
+    if index.stat().st_size > 1024 * 1024:
+        raise ValueError("Job posting index size limit exceeded.")
+    categories, columns = {}, None
+    for line in index.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if all(name in cells for name in ("번호", "직무 유형", "파일")):
+            columns = {name: cells.index(name) for name in ("번호", "직무 유형", "파일")}
+            continue
+        if not columns or len(cells) <= max(columns.values()):
+            continue
+        number = cells[columns["번호"]]
+        category = cells[columns["직무 유형"]]
+        link = re.fullmatch(r"\[[^\]]*\]\(([0-9]+)\.md\)", cells[columns["파일"]])
+        if (
+            not number.isascii()
+            or not number.isdigit()
+            or not link
+            or int(number) != int(link[1])
+            or not category
+        ):
+            continue
+        categories[f"{link[1]}.md"] = category
+    return categories
+
+
 def load_career_markdown(directory):
     """Expose only the configured repository's numbered fictional posting fixtures."""
     if not directory.is_dir():
@@ -50,6 +82,7 @@ def load_career_markdown(directory):
     )
     if not files:
         raise ValueError("No numbered Markdown job postings were found.")
+    categories = career_posting_categories(directory)
     items, total_size = [], 0
     for path in files:
         size = path.stat().st_size
@@ -61,6 +94,7 @@ def load_career_markdown(directory):
                 "id": path.stem,
                 "filename": path.name,
                 "content": path.read_text(encoding="utf-8-sig"),
+                **({"role_category": categories[path.name]} if path.name in categories else {}),
             }
         )
     return {"items": items}

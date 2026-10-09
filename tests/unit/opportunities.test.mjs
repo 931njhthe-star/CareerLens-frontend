@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { guestResumePage, guestFileMetadata } from '../../src/features/resumes/guest.js';
 import {
   opportunityRoute,
@@ -10,6 +12,7 @@ import {
   opportunitiesPage,
   opportunityList,
   opportunityDetail,
+  opportunityCountLabel,
 } from '../../src/pages/opportunities.js';
 import { analysisReport } from '../../src/features/analysis/report.js';
 import { shell } from '../../src/shared/components/ui.js';
@@ -44,14 +47,167 @@ test('role filters, selected posting and pagination round-trip without uploading
   assert.deepEqual(route, {
     role_id: 'custom',
     label: 'UX & 데이터',
+    scope: 'category',
     page: 2,
     selected: '공고/?&',
   });
   const query = new URLSearchParams(opportunityQuery(route).split('?')[1]);
   assert.equal(query.get('role'), 'UX & 데이터');
+  assert.equal(query.get('role_scope'), 'category');
   assert.equal(query.get('page'), '2');
   assert.equal(query.has('resume_text'), false);
   assert.equal(opportunityRoute('#/questions'), null);
+});
+
+test('scope survives selection, pagination and reload while invalid values default to category', () => {
+  for (const scope of ['category', 'exact', 'all']) {
+    const target = { role_id: 'serving', label: 'AI 모델 서빙 최적화 엔지니어', scope };
+    const selected = opportunityRoute(`#/${opportunityPath(target, 3, 'registered-uuid')}`);
+    assert.equal(selected.scope, scope);
+    assert.equal(selected.selected, 'registered-uuid');
+    const next = opportunityRoute(`#/${opportunityPath(selected, 4)}`);
+    assert.equal(next.scope, scope);
+    assert.equal(next.page, 4);
+    assert.equal(next.selected, '');
+    const request = new URLSearchParams(opportunityQuery(next).split('?')[1]);
+    assert.equal(request.get('role_scope'), scope);
+    assert.equal(request.get('role_id'), target.role_id);
+  }
+  for (const value of ['', 'unknown', 'ALL', '<script>']) {
+    const route = opportunityRoute(`#/opportunities?scope=${encodeURIComponent(value)}`);
+    assert.equal(route.scope, 'category');
+    const query = new URLSearchParams(opportunityQuery({ ...route, scope: value }).split('?')[1]);
+    assert.equal(query.get('role_scope'), 'category');
+  }
+});
+
+test('scope counts explain the source classification and custom role fallback', () => {
+  const category = {
+    total: 11,
+    available_total: 100,
+    role_category: '플랫폼·서빙',
+    role_scope: 'category',
+  };
+  assert.equal(
+    opportunityCountLabel(category, { scope: 'category' }),
+    '전체 100개 중 11개 공고 · 플랫폼·서빙 분류',
+  );
+  assert.equal(
+    opportunityCountLabel({ ...category, total: 1 }, { scope: 'exact' }),
+    '전체 100개 중 1개 공고 · 선택한 직무명만',
+  );
+  assert.equal(
+    opportunityCountLabel({ ...category, total: 100 }, { scope: 'all' }),
+    '전체 100개 공고',
+  );
+  assert.equal(
+    opportunityCountLabel(
+      { ...category, total: 100, role_scope: 'all', role_category: '' },
+      { scope: 'category', role_id: 'legacy-role' },
+    ),
+    '전체 100개 공고 · 분류 정보가 없어 전체 표시',
+  );
+  const fallback = { ...category, total: 2, role_scope: 'exact', role_category: '' };
+  assert.equal(
+    opportunityCountLabel(fallback, { scope: 'category', role_id: 'custom' }),
+    '전체 100개 중 2개 공고 · 입력 직무 기준 · 분류 정보 없음',
+  );
+  assert.equal(
+    opportunityCountLabel(fallback, { scope: 'category', role_id: 'legacy-role' }),
+    '전체 100개 중 2개 공고 · 선택한 직무명만 · 분류 정보 없음',
+  );
+});
+
+test('scope controls reset the page while list navigation and evaluation retain posting identity', async () => {
+  const controller = readFileSync(
+    new URL('../../src/features/job-postings/opportunities.js', import.meta.url),
+    'utf8',
+  )
+    .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
+    .replace('export function bindOpportunities', 'function bindOpportunities');
+  const elements = new Map();
+  for (const id of [
+    'opportunity-list',
+    'opportunity-detail',
+    'opportunity-count',
+    'opportunity-pagination',
+    'opportunity-scope',
+    'opportunity-role',
+    'opportunity-apply',
+  ]) {
+    elements.set(id, {
+      listeners: new Map(),
+      value: '',
+      isConnected: true,
+      setAttribute() {},
+      querySelectorAll: () => [],
+      addEventListener(type, callback) {
+        this.listeners.set(type, callback);
+      },
+    });
+  }
+  const posting = {
+    id: '97a60839-656f-471d-a30e-2b3e0be3ed90',
+    role: '같은 분류의 다른 직무',
+    company: '가상 기업',
+    skills: [],
+  };
+  const route = { role_id: 'serving', label: '서빙 직무', scope: 'category', page: 3, selected: '' };
+  const navigations = [];
+  const requests = [];
+  let selectedPosting;
+  let selectedUrl;
+  const context = vm.createContext({
+    AbortController,
+    document: { getElementById: (id) => elements.get(id) },
+    history: { replaceState: (_state, _unused, url) => (selectedUrl = url) },
+    opportunityList,
+    opportunityDetail,
+    opportunityCountLabel,
+    opportunityPath,
+    opportunityQuery,
+    api: async (path) => {
+      requests.push(path);
+      if (path === '/career-roles') return { items: [{ id: 'serving', label: route.label }] };
+      if (path.includes('?'))
+        return {
+          items: [posting],
+          total: 61,
+          available_total: 100,
+          page_size: 20,
+          role_category: '플랫폼·서빙',
+          role_scope: 'category',
+        };
+      assert.equal(path, `/job-postings/${posting.id}`);
+      return { posting };
+    },
+    options: {
+      route,
+      user: { id: 'member' },
+      navigate: (path) => navigations.push(opportunityRoute(`#/${path}`)),
+      onSelect: async (value) => (selectedPosting = value),
+      onError: assert.fail,
+    },
+  });
+  vm.runInContext(`${controller}\nconst dispose = bindOpportunities(options);`, context);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(elements.get('opportunity-scope').value, 'category');
+  assert.ok(requests.some((path) => path.includes('role_scope=category')));
+  assert.equal(opportunityRoute(selectedUrl).selected, posting.id);
+  assert.equal(opportunityRoute(selectedUrl).scope, 'category');
+  await elements.get('opportunity-apply').listeners.get('click')();
+  assert.equal(selectedPosting, posting);
+  elements.get('opportunity-pagination').listeners.get('click')({
+    target: { closest: () => ({ dataset: { page: '4' }, disabled: false }) },
+  });
+  assert.equal(navigations.at(-1).scope, 'category');
+  assert.equal(navigations.at(-1).page, 4);
+  elements.get('opportunity-scope').value = 'all';
+  elements.get('opportunity-scope').listeners.get('change')();
+  assert.equal(navigations.at(-1).scope, 'all');
+  assert.equal(navigations.at(-1).page, 1);
+  assert.equal(navigations.at(-1).selected, '');
+  vm.runInContext('dispose();', context);
 });
 
 test('registered fictional postings keep their badge and analysis identity in both panes', () => {

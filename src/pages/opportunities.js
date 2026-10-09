@@ -11,7 +11,19 @@ export function opportunitiesPage() {
     </div><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>
     <section class="opportunities" aria-label="희망 직무별 채용공고">
       <aside class="opportunities__sidebar" aria-label="채용공고 목록">
-        <div class="opportunities__list-heading"><h2 id="opportunity-role">채용공고</h2><p id="opportunity-count" role="status">목록을 불러오는 중…</p><a class="back-link" href="#/jobs">전체 직무별 공고 보기</a></div>
+        <div class="opportunities__list-heading">
+          <h2 id="opportunity-role">채용공고</h2>
+          <div class="opportunity-scope">
+            <label for="opportunity-scope">공고 표시 범위</label>
+            <select id="opportunity-scope" aria-describedby="opportunity-count">
+              <option value="category">같은 분류의 공고</option>
+              <option value="exact">선택한 직무만</option>
+              <option value="all">전체 공고</option>
+            </select>
+          </div>
+          <p id="opportunity-count" role="status">목록을 불러오는 중…</p>
+          <a class="back-link" href="#/jobs">전체 직무별 공고 보기</a>
+        </div>
         <div id="opportunity-list" class="opportunities__list" aria-busy="true"></div>
         <nav id="opportunity-pagination" class="opportunities__pagination" aria-label="공고 페이지"></nav>
       </aside>
@@ -19,6 +31,21 @@ export function opportunitiesPage() {
         <div class="opportunities__empty"><h2>공고를 준비하고 있어요.</h2><p>목록을 불러온 뒤 상세 내용을 표시합니다.</p></div>
       </article>
     </section>`;
+}
+
+export function opportunityCountLabel(result, route) {
+  const count = `${result.total.toLocaleString('ko-KR')}개 공고`;
+  if (route.scope === 'all') return `전체 ${count}`;
+  if (route.scope === 'category' && result.role_scope === 'all')
+    return `전체 ${count} · 분류 정보가 없어 전체 표시`;
+  const total = Number.isInteger(result.available_total)
+    ? `전체 ${result.available_total.toLocaleString('ko-KR')}개 중 `
+    : '';
+  if (route.scope === 'category' && result.role_category)
+    return `${total}${count} · ${result.role_category} 분류`;
+  const basis = route.role_id === 'custom' ? '입력 직무 기준' : '선택한 직무명만';
+  const fallback = route.scope === 'category' ? ' · 분류 정보 없음' : '';
+  return `${total}${count} · ${basis}${fallback}`;
 }
 
 export function opportunityList(items, selected) {

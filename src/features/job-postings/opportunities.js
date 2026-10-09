@@ -1,6 +1,10 @@
 import { api } from '../../shared/api/client.js';
 import { escapeHtml as e } from '../../shared/components/ui.js';
-import { opportunityList, opportunityDetail } from '../../pages/opportunities.js';
+import {
+  opportunityList,
+  opportunityDetail,
+  opportunityCountLabel,
+} from '../../pages/opportunities.js';
 import { opportunityPath, opportunityQuery } from './opportunity-state.js';
 
 export function bindOpportunities({ route, user, navigate, onSelect, onError }) {
@@ -10,6 +14,8 @@ export function bindOpportunities({ route, user, navigate, onSelect, onError }) 
   const detail = document.getElementById('opportunity-detail');
   const count = document.getElementById('opportunity-count');
   const pagination = document.getElementById('opportunity-pagination');
+  const scope = document.getElementById('opportunity-scope');
+  scope.value = route.scope;
   let detailController;
   let items = [];
   let selected = route.selected;
@@ -75,14 +81,14 @@ export function bindOpportunities({ route, user, navigate, onSelect, onError }) 
       if (signal.aborted) return;
       items = result.items;
       selected = items.some((item) => item.id === selected) ? selected : items[0]?.id;
-      count.textContent = `${result.total.toLocaleString('ko-KR')}개 공고 · 직무명 기준`;
+      count.textContent = opportunityCountLabel(result, route);
       list.innerHTML = opportunityList(items, selected);
       pagination.innerHTML = `<button class="text-button" data-page="${route.page - 1}" ${route.page === 1 ? 'disabled' : ''}>이전</button><span>${route.page} / ${Math.max(1, Math.ceil(result.total / result.page_size))}</span><button class="text-button" data-page="${route.page + 1}" ${route.page * result.page_size >= result.total ? 'disabled' : ''}>다음</button>`;
       if (selected) await select(selected);
       else {
         detail.setAttribute('aria-busy', 'false');
         detail.innerHTML =
-          '<div class="opportunities__empty"><h2>이 직무의 공고가 아직 없어요.</h2><p>다른 희망 직무를 선택해 주세요. 등록된 공고가 추가되면 이 목록에 표시됩니다.</p><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>';
+          '<div class="opportunities__empty"><h2>이 범위의 공고가 아직 없어요.</h2><p>공고 표시 범위를 바꾸거나 다른 희망 직무를 선택해 주세요. 등록된 공고가 추가되면 이 목록에 표시됩니다.</p><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>';
       }
     } catch (error) {
       if (signal.aborted) return;
@@ -109,6 +115,11 @@ export function bindOpportunities({ route, user, navigate, onSelect, onError }) 
       const button = event.target.closest('[data-page]');
       if (button && !button.disabled) navigate(opportunityPath(route, Number(button.dataset.page)));
     },
+    { signal },
+  );
+  scope.addEventListener(
+    'change',
+    () => navigate(opportunityPath({ ...route, scope: scope.value })),
     { signal },
   );
   load();

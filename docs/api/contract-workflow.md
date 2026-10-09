@@ -11,7 +11,7 @@
 | 로그인·가입·토큰 갱신 | `/auth/login`, `/auth/signup`, `/auth/refresh`, `/me` |
 | 파일 본문 변환 | 프론트 전용 `POST /local-data/convert-resume`, multipart `file` → `{filename, text}` |
 | 인증된 이력서 저장 | UTF-8 Markdown multipart로 백엔드 `POST /resumes`; 조회는 `/resumes`와 `/resumes/{id}` |
-| 로그인 전 탐색 자료 | 프론트 전용 `GET /local-data/career-markdown` → `{items:[{id, filename, content}]}` |
+| 로그인 전 탐색 자료 | 프론트 전용 `GET /local-data/career-markdown` → `{items:[{id, filename, content, role_category?}]}` |
 | 실제 평가 공고 | 백엔드 `/jobs`, `/jobs/{id}`에 등록된 UUID |
 | 평가 생성 | `POST /evaluations`에 `{resume_id, job_posting_id}` |
 | 진행 상태 | `/evaluations/{run_id}/progress`, 404일 때 `/evaluations/{run_id}` 대체 조회 |
@@ -21,6 +21,10 @@
 PDF/DOCX/TXT/MD 변환은 10MiB 이하 파일을 메모리에서 처리하며 원본을 디스크에 저장하지 않습니다. 변환 응답에는 추출문이 포함됩니다. 로그인 전 준비 자료는 프론트 세션 저장소에만 보관하고 첫 유효 첨부부터 30분 유효 기간을 적용합니다. 인증 후 이력서를 실제 백엔드로 업로드하고 직무·유효한 백엔드 공고 선택을 이어갑니다. 이전 서버의 게스트 분석·SQL 임시 테이블·완료 보고서 claim과는 다릅니다. 실제 backend가 받은 Markdown은 Supabase Storage와 테이블에 보관됩니다.
 
 로그인 전 공고 원본은 `CAREERLENS_JOB_POSTINGS_DIR` 또는 형제 백엔드의 `app/modules/job_postings`에서 읽습니다. 숫자 이름의 가상 공고만 제공하며 목록·작성 프롬프트·하위 중복 폴더를 제외합니다. 프론트 빌드 자체가 백엔드 checkout을 필요로 하지는 않지만 이 탐색 자료 endpoint는 해당 설정 폴더를 필요로 합니다. 실제 평가에서 존재하지 않는 공고 ID나 시연 보고서로 우회하지 않습니다.
+
+분류는 프론트 서버가 동일 폴더의 `00_목록.md`에서 번호·파일명이 일치하는 행의 **직무 유형**을 읽어 선택적 `role_category`로 제공합니다. 목차 자체는 공고 항목이 아니며 Markdown 링크를 따라 파일을 읽지 않습니다. 백엔드 공고는 `source_name=local_markdown`과 `source_external_id`가 모두 일치할 때만 원본 분류를 보완하고 등록 UUID는 유지합니다.
+
+프론트 화면용 `/job-postings` 호출의 `role_scope=category|exact|all`은 프론트 어댑터에서 처리합니다. 공고 선택의 기본값은 `category`이며 선택 직무의 분류로 조회합니다. `exact`는 세부 직무명이 같은 공고, `all`은 선택 직무 제한 없는 목록입니다. 응답의 `total`은 조회된 수, `available_total`은 조회 전 전체 수이며 `role_scope`·`role_category`로 실제 적용 범위를 설명합니다. 분류 정보가 없는 사전 정의 직무는 전체를 표시하고, 직접 입력 직무는 기존 키워드 검색을 유지합니다. `role_scope` 없는 기존 호출은 직무명 검색 동작을 유지합니다. 백엔드에 새 필터 API나 스키마를 추가하지 않습니다.
 
 새 평가 ID를 추적해 취소 요청을 서버에도 전달합니다. 생성 요청이 서버에 접수된 뒤 UI가 취소됐을 가능성도 고려하며, 타이머 종료나 브라우저 fetch 취소를 서버 완료·취소의 증거로 사용하지 않습니다. 완료 상태는 `completed` 또는 `partial`이며 최종 Markdown이 있는 유효한 보고서를 받은 뒤에만 화면에 적용합니다. 이전 화면 계약으로 반환할 때도 `{ draft, questions }` 대신 `{ report }`를 사용합니다.
 
