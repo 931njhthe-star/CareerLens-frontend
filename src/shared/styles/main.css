@@ -49,7 +49,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  height: clamp(440px, calc(100dvh - 310px), 820px);
+  height: var(--opportunity-panel-height, 900px);
   background: var(--paper);
 }
 .opportunities__sidebar {
@@ -60,6 +60,7 @@
   border-right: 1px solid var(--line);
 }
 .opportunities__list-heading {
+  flex: 0 0 auto;
   padding: 22px 24px 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -104,7 +105,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   min-height: 0;
-  flex: 1;
+  flex: 1 1 var(--opportunity-list-height, 640px);
 }
 .opportunity-row {
   width: 100%;
@@ -159,6 +160,7 @@
 }
 .opportunities__pagination {
   display: flex;
+  flex: 0 0 auto;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
@@ -167,12 +169,31 @@
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.opportunities__pagination button:disabled {
-  opacity: 0.4;
+.opportunities__pagination .opportunity-page-button {
+  min-width: 64px;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.opportunities__pagination .opportunity-page-button:not(:disabled):hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.opportunities__pagination .opportunity-page-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.opportunities__pagination .opportunity-page-button:disabled {
+  opacity: 0.55;
+  background: var(--canvas);
   cursor: default;
 }
 .opportunities__detail {
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 36px 40px 0;
@@ -270,15 +291,13 @@
     height: auto;
   }
   .opportunities__sidebar {
+    height: var(--opportunity-panel-height, 900px);
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .opportunities__list {
-    max-height: 260px;
-  }
   .opportunities__detail {
     padding: 25px 22px 0;
-    max-height: 70dvh;
+    height: var(--opportunity-panel-height, 900px);
   }
   .opportunity-detail__actions {
     position: static;

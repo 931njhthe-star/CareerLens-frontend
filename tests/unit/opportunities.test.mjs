@@ -15,7 +15,7 @@ import {
   opportunityCountLabel,
 } from '../../src/pages/opportunities.js';
 import { analysisReport } from '../../src/features/analysis/report.js';
-import { shell } from '../../src/shared/components/ui.js';
+import { shell, escapeHtml } from '../../src/shared/components/ui.js';
 
 test('file choice validates metadata while guest attachment UI never previews the resume', () => {
   const file = {
@@ -118,96 +118,331 @@ test('scope counts explain the source classification and custom role fallback', 
   );
 });
 
-test('scope controls reset the page while list navigation and evaluation retain posting identity', async () => {
-  const controller = readFileSync(
-    new URL('../../src/features/job-postings/opportunities.js', import.meta.url),
-    'utf8',
-  )
-    .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
-    .replace('export function bindOpportunities', 'function bindOpportunities');
-  const elements = new Map();
-  for (const id of [
-    'opportunity-list',
-    'opportunity-detail',
-    'opportunity-count',
-    'opportunity-pagination',
-    'opportunity-scope',
-    'opportunity-role',
-    'opportunity-apply',
-  ]) {
-    elements.set(id, {
-      listeners: new Map(),
-      value: '',
-      isConnected: true,
-      setAttribute() {},
-      querySelectorAll: () => [],
-      addEventListener(type, callback) {
-        this.listeners.set(type, callback);
-      },
-    });
-  }
-  const posting = {
-    id: '97a60839-656f-471d-a30e-2b3e0be3ed90',
-    role: '같은 분류의 다른 직무',
-    company: '가상 기업',
-    skills: [],
+const opportunityController = readFileSync(
+  new URL('../../src/features/job-postings/opportunities.js', import.meta.url),
+  'utf8',
+)
+  .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
+  .replace('export function bindOpportunities', 'function bindOpportunities');
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function postingFixture(id) {
+  return { id, role: `직무 ${id}`, company: '가상 기업', description: `${id} 공고 본문`, skills: [] };
+}
+
+function listResult(page) {
+  return {
+    items: [postingFixture(`page-${page}-first`), postingFixture(`page-${page}-second`)],
+    total: 100,
+    available_total: 100,
+    page_size: 20,
+    role_category: '플랫폼·서빙',
+    role_scope: 'category',
   };
-  const route = { role_id: 'serving', label: '서빙 직무', scope: 'category', page: 3, selected: '' };
+}
+
+// Exercise production event handlers and requests, including DOM identity when
+// detail markup is replaced. No real backend or evaluation request is made.
+async function opportunityFixture({ selected = '', listRequest, detailRequest } = {}) {
+  const elements = new Map();
+  class Element {
+    constructor(id = '') {
+      this.id = id;
+      this.listeners = new Map();
+      this.attributes = new Map();
+      this.children = [];
+      this.rows = [];
+      this.value = '';
+      this.isConnected = true;
+      this.disabled = false;
+      this.scrollTop = 0;
+      this.writes = 0;
+      this.dataset = {};
+      this.content = '';
+      this.style = { setProperty() {}, removeProperty() {} };
+    }
+    set innerHTML(value) {
+      this.writes += 1;
+      this.content = value;
+      for (const child of this.children) {
+        child.isConnected = false;
+        elements.delete(child.id);
+      }
+      this.children = [...value.matchAll(/\bid="([^"]+)"/g)].map((match) => {
+        const child = new Element(match[1]);
+        elements.set(child.id, child);
+        return child;
+      });
+      this.rows = [...value.matchAll(/data-posting-id="([^"]+)"[\s\S]*?aria-current="([^"]+)"/g)]
+        .map((match) => {
+          const row = new Element();
+          row.dataset.postingId = match[1];
+          row.setAttribute('aria-current', match[2]);
+          return row;
+        });
+    }
+    get innerHTML() { return this.content; }
+    set textContent(value) { this.innerHTML = value; }
+    get textContent() { return this.content; }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    getAttribute(name) { return this.attributes.get(name); }
+    removeAttribute(name) { this.attributes.delete(name); }
+    querySelectorAll(selector) { return selector === '[data-posting-id]' ? this.rows : []; }
+    querySelector() { return null; }
+    closest() { return container; }
+    getBoundingClientRect() { return { top: 200, bottom: 800, height: 600, width: 1000 }; }
+    addEventListener(type, callback, options = {}) { this.listeners.set(type, { callback, options }); }
+    focus() { this.focused = true; }
+    dispatch(type, event = {}) {
+      const listener = this.listeners.get(type);
+      if (listener && !listener.options.signal?.aborted) return listener.callback(event);
+    }
+  }
+  const container = new Element('opportunities');
+  for (const id of [
+    'opportunity-list', 'opportunity-detail', 'opportunity-count',
+    'opportunity-pagination', 'opportunity-scope', 'opportunity-role', 'opportunity-catalog',
+    'opportunity-list-status', 'opportunities-panel', 'opportunity-list-heading',
+  ]) elements.set(id, new Element(id));
+  const route = { role_id: 'serving', label: '서빙 직무', scope: 'category', page: 3, selected };
   const navigations = [];
   const requests = [];
-  let selectedPosting;
-  let selectedUrl;
+  const evaluations = [];
+  const errors = [];
+  let selectedUrl = `#/${opportunityPath(route, route.page, selected)}`;
   const context = vm.createContext({
     AbortController,
-    document: { getElementById: (id) => elements.get(id) },
+    URLSearchParams,
+    document: {
+      getElementById: (id) => elements.get(id) || null,
+      querySelector: () => container,
+      documentElement: { clientHeight: 900 },
+    },
+    window: { innerHeight: 900, addEventListener() {}, removeEventListener() {} },
     history: { replaceState: (_state, _unused, url) => (selectedUrl = url) },
     opportunityList,
     opportunityDetail,
     opportunityCountLabel,
     opportunityPath,
     opportunityQuery,
-    api: async (path) => {
-      requests.push(path);
+    e: escapeHtml,
+    api: async (path, options = {}) => {
+      const request = { path, signal: options.signal };
+      requests.push(request);
       if (path === '/career-roles') return { items: [{ id: 'serving', label: route.label }] };
-      if (path.includes('?'))
-        return {
-          items: [posting],
-          total: 61,
-          available_total: 100,
-          page_size: 20,
-          role_category: '플랫폼·서빙',
-          role_scope: 'category',
-        };
-      assert.equal(path, `/job-postings/${posting.id}`);
-      return { posting };
+      if (path.includes('?')) {
+        const page = Number(new URLSearchParams(path.split('?')[1]).get('page'));
+        return listRequest ? listRequest(page, request) : listResult(page);
+      }
+      const id = decodeURIComponent(path.split('/').at(-1));
+      return detailRequest ? detailRequest(id, request) : { posting: postingFixture(id) };
     },
     options: {
       route,
       user: { id: 'member' },
       navigate: (path) => navigations.push(opportunityRoute(`#/${path}`)),
-      onSelect: async (value) => (selectedPosting = value),
-      onError: assert.fail,
+      onSelect: async (posting) => evaluations.push(posting),
+      onError: (error) => errors.push(error),
     },
   });
-  vm.runInContext(`${controller}\nconst dispose = bindOpportunities(options);`, context);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(elements.get('opportunity-scope').value, 'category');
-  assert.ok(requests.some((path) => path.includes('role_scope=category')));
-  assert.equal(opportunityRoute(selectedUrl).selected, posting.id);
-  assert.equal(opportunityRoute(selectedUrl).scope, 'category');
-  await elements.get('opportunity-apply').listeners.get('click')();
-  assert.equal(selectedPosting, posting);
-  elements.get('opportunity-pagination').listeners.get('click')({
-    target: { closest: () => ({ dataset: { page: '4' }, disabled: false }) },
+  vm.runInContext(`${opportunityController}\nconst dispose = bindOpportunities(options);`, context);
+  await settle();
+  return {
+    elements, requests, navigations, evaluations, errors,
+    get route() { return opportunityRoute(selectedUrl); },
+    async page(page) {
+      elements.get('opportunity-pagination').dispatch('click', {
+        target: { closest: () => ({ dataset: { page: String(page) }, disabled: false }) },
+      });
+      await settle();
+    },
+    async select(id) {
+      elements.get('opportunity-list').dispatch('click', {
+        target: { closest: () => ({ dataset: { postingId: id } }) },
+      });
+      await settle();
+    },
+    async apply() { await elements.get('opportunity-apply').dispatch('click'); },
+    async retry() {
+      assert.ok(elements.get('retry-opportunities'), 'a list retry control is present');
+      elements.get('retry-opportunities').dispatch('click');
+      await settle();
+    },
+    changeScope(value) {
+      const scope = elements.get('opportunity-scope');
+      scope.value = value;
+      scope.dispatch('change');
+    },
+    dispose() { vm.runInContext('dispose();', context); },
+  };
+}
+
+test('paging replaces only the list and retains detail DOM, scroll and evaluation posting until a row is chosen', async () => {
+  const fixture = await opportunityFixture();
+  const detail = fixture.elements.get('opportunity-detail');
+  const apply = fixture.elements.get('opportunity-apply');
+  const initialMarkup = detail.innerHTML;
+  const initialWrites = detail.writes;
+  detail.scrollTop = 387;
+  await fixture.page(4);
+  assert.equal(fixture.navigations.length, 0, 'paging never remounts the route');
+  assert.match(fixture.elements.get('opportunity-list').innerHTML, /page-4-first/);
+  assert.equal(detail.innerHTML, initialMarkup);
+  assert.equal(detail.writes, initialWrites, 'even equivalent detail markup is not replaced');
+  assert.equal(detail.scrollTop, 387);
+  assert.equal(fixture.elements.get('opportunity-apply'), apply);
+  assert.equal(fixture.route.page, 4);
+  assert.equal(fixture.route.selected, 'page-3-first');
+  assert.equal(
+    fixture.elements.get('opportunity-list').rows.some((row) => row.getAttribute('aria-current') === 'true'),
+    false,
+    'an off-page detail does not mark an unrelated row as selected',
+  );
+  await fixture.apply();
+  assert.equal(fixture.evaluations.at(-1).id, 'page-3-first');
+  await fixture.page(3);
+  assert.equal(fixture.route.page, 3);
+  assert.equal(detail.writes, initialWrites);
+  assert.equal(detail.scrollTop, 387);
+  assert.equal(fixture.elements.get('opportunity-apply'), apply);
+  assert.equal(fixture.elements.get('opportunity-list').rows[0].getAttribute('aria-current'), 'true');
+  await fixture.page(4);
+  assert.equal(fixture.requests.filter(({ path }) => path === '/career-roles').length, 1);
+  assert.equal(fixture.requests.filter(({ path }) => !path.includes('?') && path.startsWith('/job-postings/')).length, 1);
+
+  await fixture.select('page-4-second');
+  assert.match(detail.innerHTML, /page-4-second 공고 본문/);
+  assert.equal(detail.scrollTop, 0);
+  assert.notEqual(fixture.elements.get('opportunity-apply'), apply);
+  assert.equal(apply.isConnected, false);
+  assert.equal(fixture.route.page, 4);
+  assert.equal(fixture.route.selected, 'page-4-second');
+  await fixture.apply();
+  assert.equal(fixture.evaluations.at(-1).id, 'page-4-second');
+  fixture.dispose();
+});
+
+test('scope changes reset the route while catalog return links retain the current list page and open detail', async () => {
+  const fixture = await opportunityFixture();
+  await fixture.page(4);
+  const catalog = fixture.elements.get('opportunity-catalog');
+  const returnTo = new URLSearchParams((catalog.href || catalog.getAttribute('href')).split('?')[1]).get('return_to');
+  assert.deepEqual(opportunityRoute(`#/${returnTo}`), fixture.route);
+  fixture.changeScope('all');
+  assert.equal(fixture.navigations.length, 1);
+  assert.equal(fixture.navigations[0].scope, 'all');
+  assert.equal(fixture.navigations[0].page, 1);
+  assert.equal(fixture.navigations[0].selected, '');
+  fixture.dispose();
+});
+
+test('a page request failure keeps old rows and open detail usable and retries the requested page', async () => {
+  let fail = true;
+  const fixture = await opportunityFixture({
+    listRequest(page) {
+      if (page === 4 && fail) throw new Error('일시적으로 목록을 불러오지 못했습니다.');
+      return listResult(page);
+    },
   });
-  assert.equal(navigations.at(-1).scope, 'category');
-  assert.equal(navigations.at(-1).page, 4);
-  elements.get('opportunity-scope').value = 'all';
-  elements.get('opportunity-scope').listeners.get('change')();
-  assert.equal(navigations.at(-1).scope, 'all');
-  assert.equal(navigations.at(-1).page, 1);
-  assert.equal(navigations.at(-1).selected, '');
-  vm.runInContext('dispose();', context);
+  const list = fixture.elements.get('opportunity-list');
+  const oldRows = list.innerHTML;
+  const detail = fixture.elements.get('opportunity-detail');
+  const oldDetail = detail.innerHTML;
+  const apply = fixture.elements.get('opportunity-apply');
+  detail.scrollTop = 234;
+  await fixture.page(4);
+  assert.equal(list.innerHTML, oldRows);
+  assert.equal(detail.innerHTML, oldDetail);
+  assert.equal(detail.scrollTop, 234);
+  assert.equal(fixture.elements.get('opportunity-apply'), apply);
+  assert.equal(fixture.route.page, 3, 'URL keeps the last successfully displayed list');
+  assert.equal(fixture.elements.get('opportunity-list-status').hidden, false);
+  assert.match(fixture.elements.get('opportunity-list-status').innerHTML, /일시적으로 목록을/);
+  await fixture.apply();
+  assert.equal(fixture.evaluations.at(-1).id, 'page-3-first');
+  fail = false;
+  await fixture.retry();
+  assert.match(list.innerHTML, /page-4-first/);
+  assert.equal(detail.innerHTML, oldDetail);
+  assert.equal(fixture.route.page, 4);
+  assert.equal(fixture.elements.get('opportunity-list-status').hidden, true);
+  assert.equal(fixture.requests.filter(({ path }) => path === '/career-roles').length, 1);
+  fixture.dispose();
+});
+
+test('newer page results win when an aborted list request returns late', async () => {
+  const fourth = deferred();
+  const fifth = deferred();
+  const fixture = await opportunityFixture({
+    listRequest: (page) => page === 4 ? fourth.promise : page === 5 ? fifth.promise : listResult(page),
+  });
+  const detail = fixture.elements.get('opportunity-detail');
+  const initialWrites = detail.writes;
+  await fixture.page(4);
+  const obsolete = fixture.requests.at(-1);
+  await fixture.page(5);
+  assert.equal(obsolete.signal.aborted, true);
+  fifth.resolve(listResult(5));
+  await settle();
+  assert.equal(fixture.route.page, 5);
+  assert.match(fixture.elements.get('opportunity-list').innerHTML, /page-5-first/);
+  fourth.resolve(listResult(4));
+  await settle();
+  assert.equal(fixture.route.page, 5);
+  assert.match(fixture.elements.get('opportunity-list').innerHTML, /page-5-first/);
+  assert.equal(detail.writes, initialWrites);
+  assert.equal(fixture.route.selected, 'page-3-first');
+  fixture.dispose();
+});
+
+test('disposed list and detail requests cannot update the abandoned view', async () => {
+  const pendingList = deferred();
+  const fixture = await opportunityFixture({
+    listRequest: (page) => page === 4 ? pendingList.promise : listResult(page),
+  });
+  await fixture.page(4);
+  const lastRequest = fixture.requests.at(-1);
+  const oldList = fixture.elements.get('opportunity-list').innerHTML;
+  const oldDetail = fixture.elements.get('opportunity-detail').innerHTML;
+  fixture.dispose();
+  assert.equal(lastRequest.signal.aborted, true);
+  pendingList.resolve(listResult(4));
+  await settle();
+  assert.equal(fixture.elements.get('opportunity-list').innerHTML, oldList);
+  assert.equal(fixture.elements.get('opportunity-detail').innerHTML, oldDetail);
+  assert.equal(fixture.route.page, 3);
+
+  const pendingDetail = deferred();
+  const second = await opportunityFixture({
+    detailRequest: (id) => id === 'page-3-second' ? pendingDetail.promise : { posting: postingFixture(id) },
+  });
+  await second.select('page-3-second');
+  const detailRequest = second.requests.at(-1);
+  const loadingDetail = second.elements.get('opportunity-detail').innerHTML;
+  second.dispose();
+  assert.equal(detailRequest.signal.aborted, true);
+  pendingDetail.resolve({ posting: postingFixture('page-3-second') });
+  await settle();
+  assert.equal(second.elements.get('opportunity-detail').innerHTML, loadingDetail);
+});
+
+test('a reload can show a selected posting that is absent from the current list page', async () => {
+  const fixture = await opportunityFixture({ selected: 'off-page-selected' });
+  assert.match(fixture.elements.get('opportunity-list').innerHTML, /page-3-first/);
+  assert.match(fixture.elements.get('opportunity-detail').innerHTML, /off-page-selected 공고 본문/);
+  assert.equal(fixture.route.selected, 'off-page-selected');
+  await fixture.apply();
+  assert.equal(fixture.evaluations.at(-1).id, 'off-page-selected');
+  assert.equal(fixture.requests.filter(({ path }) => path === '/career-roles').length, 1);
+  fixture.dispose();
 });
 
 test('registered fictional postings keep their badge and analysis identity in both panes', () => {

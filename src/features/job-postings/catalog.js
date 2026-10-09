@@ -1,7 +1,7 @@
 import { api } from '../../shared/api/client.js';
 import { notice, pending, bindCounters } from '../../shared/components/ui.js';
 import { jobListPage, jobDetailPage, postingEditorPage, jobsError } from '../../pages/jobs.js';
-import { catalogQuery, postingPayload } from './catalog-state.js';
+import { catalogPath, catalogQuery, postingPayload } from './catalog-state.js';
 
 const drafts = new Map();
 let activeRequest;
@@ -45,7 +45,9 @@ export async function bindCatalog({
         requireLogin(`jobs?${query}`);
         return;
       }
-      list = await read(`/job-postings?${query}`);
+      const filters = new URLSearchParams(query);
+      filters.delete('return_to');
+      list = await read(`/job-postings?${filters}`);
       if (!current()) return;
       // A deletion or changed dataset can make the last page empty.
       if (!list.items.length && list.page > 1) {
@@ -57,14 +59,14 @@ export async function bindCatalog({
     } else {
       if (route.id) posting = (await read(`/job-postings/${encodeURIComponent(route.id)}`)).posting;
       if (!current()) return;
-      if (route.kind === 'detail') target.innerHTML = jobDetailPage(posting, user);
+      if (route.kind === 'detail') target.innerHTML = jobDetailPage(posting, user, route.query);
       else {
         if (route.kind === 'edit' && posting.source_type !== 'manual')
           throw new Error(
             '가상 예시는 수정할 수 없습니다. 공고 직접 입력에서 내 공고를 만들어 주세요.',
           );
         const key = route.id || 'new';
-        target.innerHTML = postingEditorPage(drafts.get(key)?.value || posting, route.id);
+        target.innerHTML = postingEditorPage(drafts.get(key)?.value || posting, route.id, route.query);
       }
     }
   } catch (error) {
@@ -73,14 +75,16 @@ export async function bindCatalog({
       await onError(error);
       return;
     }
-    target.innerHTML = jobsError(error.message);
+    target.innerHTML = jobsError(error.message, route.query);
     document.getElementById('retry-jobs')?.addEventListener('click', rerender);
     return;
   }
   bindCounters(target);
   document.getElementById('catalog-search')?.addEventListener('submit', (event) => {
     event.preventDefault();
-    navigate(`jobs?${catalogQuery(new FormData(event.currentTarget))}`);
+    const next = catalogQuery(new FormData(event.currentTarget));
+    if (query.has('return_to')) next.set('return_to', query.get('return_to'));
+    navigate(`jobs?${next}`);
   });
   target.querySelectorAll('[data-bookmark]').forEach((button) =>
     button.addEventListener('click', async () => {
@@ -141,7 +145,7 @@ export async function bindCatalog({
     try {
       await api(`/job-postings/${encodeURIComponent(posting.id)}`, { method: 'DELETE' });
       drafts.delete(posting.id);
-      if (current()) navigate('jobs');
+      if (current()) navigate(catalogPath('jobs', route.query));
     } catch (error) {
       event.target.disabled = false;
       if (current()) await onError(error);
@@ -163,7 +167,8 @@ export async function bindCatalog({
           { method: route.id ? 'PUT' : 'POST', body: payload },
         );
         drafts.delete(route.id || 'new');
-        if (current()) navigate(`jobs/${encodeURIComponent(result.posting.id)}`);
+        if (current())
+          navigate(catalogPath(`jobs/${encodeURIComponent(result.posting.id)}`, route.query));
       } catch (error) {
         if (current()) await onError(error);
       }

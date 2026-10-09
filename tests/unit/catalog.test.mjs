@@ -1,14 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import { jobListPage, jobDetailPage, postingEditorPage } from '../../src/pages/jobs.js';
 import {
+  catalogPath,
   catalogQuery,
+  catalogReturnPath,
   catalogRoute,
   selectionNeedsConfirmation,
   withPostingSelection,
   safeSourceUrl,
   postingPayload,
 } from '../../src/features/job-postings/catalog-state.js';
+import {
+  opportunityPath,
+  opportunityRoute,
+} from '../../src/features/job-postings/opportunity-state.js';
 import { reportGuidance } from '../../src/features/analysis/guidance.js';
 import { shell } from '../../src/shared/components/ui.js';
 
@@ -83,6 +91,133 @@ test('catalog filters survive route round trips, Unicode and pagination', () => 
     id: 'example-python',
   });
   assert.equal(catalogRoute('#/jobs/%zz'), null);
+});
+
+function linkForLabel(html, label) {
+  const link = [...html.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)].find(
+    (match) => match[2].includes(label),
+  );
+  assert.ok(link, `Expected link: ${label}`);
+  return link[1].replaceAll('&amp;', '&');
+}
+
+test('catalog restores role, scope, page and an off-page selected posting after detail navigation', () => {
+  for (const scope of ['category', 'exact', 'all']) {
+    const target = { role_id: 'custom', label: 'UX & 데이터', scope };
+    const returnTo = opportunityPath(target, 4, 'selected-on-another-page');
+    const query = catalogQuery(new URLSearchParams({ return_to: returnTo, q: 'Python', page: '2' }));
+    const data = { items: [posting], total: 36, page: 2, page_size: 12 };
+    const html = jobListPage(data, query, null);
+    const returnLink = linkForLabel(html, '공고 선택으로 돌아가기');
+    assert.deepEqual(opportunityRoute(returnLink), {
+      ...target,
+      page: 4,
+      selected: 'selected-on-another-page',
+    });
+    const next = catalogRoute(linkForLabel(html, '다음')).query;
+    assert.equal(next.get('page'), '3');
+    assert.equal(next.get('q'), 'Python');
+    assert.equal(next.get('return_to'), returnTo);
+    const reset = catalogRoute(linkForLabel(html, '검색 초기화')).query;
+    assert.equal(reset.get('page'), '1');
+    assert.equal(reset.has('q'), false);
+    assert.equal(reset.get('return_to'), returnTo);
+    const detail = catalogRoute(linkForLabel(html, posting.role));
+    assert.equal(detail.id, posting.id);
+    const back = catalogRoute(linkForLabel(jobDetailPage(posting, null, detail.query), '← 공고 목록'));
+    assert.equal(back.query.get('q'), 'Python');
+    assert.equal(back.query.get('page'), '2');
+    assert.equal(back.query.get('return_to'), returnTo);
+    assert.equal(
+      linkForLabel(jobListPage(data, back.query, null), '공고 선택으로 돌아가기'),
+      returnLink,
+    );
+  }
+});
+
+test('catalog return targets accept only the local role workflow and normalize its query', () => {
+  for (const returnTo of [
+    'https://example.com/opportunities?role_id=backend',
+    '//example.com/opportunities?role_id=backend',
+    'javascript:alert(1)',
+    '#/opportunities?role_id=backend',
+    '/opportunities?role_id=backend',
+    'jobs?role_id=backend',
+    'opportunities/other?role_id=backend',
+    'opportunities?role_id=',
+    'opportunities?role_id=++',
+    'opportunities?role_id=backend#fragment',
+    'opportunities?role_id=backend?ignored=true',
+    'opportunities?role_id=backend\n',
+  ]) {
+    assert.equal(catalogReturnPath(returnTo), '');
+    const query = catalogQuery(new URLSearchParams({ return_to: returnTo }));
+    assert.equal(query.has('return_to'), false);
+    assert.equal(catalogPath('jobs', query), 'jobs');
+    assert.equal(
+      jobListPage({ items: [], total: 0, page: 1, page_size: 12 }, query, null).includes(
+        '공고 선택으로 돌아가기',
+      ),
+      false,
+    );
+  }
+  assert.deepEqual(
+    opportunityRoute(
+      '#/' + catalogReturnPath('opportunities?role_id=backend&scope=invalid&page=-2&selected=id&extra=discard'),
+    ),
+    { role_id: 'backend', label: '', scope: 'category', page: 1, selected: 'id' },
+  );
+  assert.equal(catalogReturnPath('opportunities?role_id=backend&extra=discard').includes('extra'), false);
+});
+
+test('catalog controller preserves return state on search while keeping it out of backend filters', async () => {
+  const source = readFileSync(
+    new URL('../../src/features/job-postings/catalog.js', import.meta.url),
+    'utf8',
+  )
+    .replace(/^import[\s\S]*?from ['"][^'"]+['"];?\r?\n/gm, '')
+    .replace(/^export /gm, '');
+  const returnTo = opportunityPath({ role_id: 'backend', label: '백엔드', scope: 'all' }, 3, 'kept-id');
+  const route = catalogRoute(`#/jobs?${new URLSearchParams({ return_to: returnTo, page: '2' })}`);
+  const requests = [];
+  const navigations = [];
+  const search = {
+    listeners: new Map(),
+    values: { q: 'SQL', location: '서울', page: '1' },
+    addEventListener(type, listener) {
+      this.listeners.set(type, listener);
+    },
+  };
+  const main = { innerHTML: '', querySelectorAll: () => [] };
+  const context = vm.createContext({
+    URLSearchParams,
+    AbortController,
+    FormData: class {
+      constructor(form) {
+        return new URLSearchParams(form.values);
+      }
+    },
+    document: { getElementById: (id) => ({ main, 'catalog-search': search })[id] || null },
+    api: async (path) => {
+      requests.push(path);
+      return { items: [posting], total: 36, page: 2, page_size: 12 };
+    },
+    bindCounters() {},
+    catalogPath,
+    catalogQuery,
+    jobListPage,
+    route,
+    navigate: (path) => navigations.push(path),
+  });
+  vm.runInContext(source, context);
+  await vm.runInContext('bindCatalog({ route, user: null, navigate })', context);
+  assert.equal(new URLSearchParams(requests[0].split('?')[1]).has('return_to'), false);
+  search.listeners.get('submit')({ preventDefault() {}, currentTarget: search });
+  const next = catalogRoute(`#/${navigations[0]}`).query;
+  assert.equal(next.get('q'), 'SQL');
+  assert.equal(next.get('location'), '서울');
+  assert.equal(next.get('page'), '1');
+  assert.equal(next.get('return_to'), returnTo);
 });
 
 test('job pages render untrusted API values as text and reject executable source URLs', () => {

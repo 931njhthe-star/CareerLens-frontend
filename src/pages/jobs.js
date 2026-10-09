@@ -1,7 +1,14 @@
 import { escapeHtml as e, icon, renderPostingPhases } from '../shared/components/ui.js';
-import { safeSourceUrl } from '../features/job-postings/catalog-state.js';
+import {
+  catalogPath,
+  catalogReturnPath,
+  safeSourceUrl,
+} from '../features/job-postings/catalog-state.js';
 
-const detailPath = (posting) => `#/jobs/${encodeURIComponent(posting.id)}`;
+const detailPath = (posting, query) =>
+  `#/${catalogPath(`jobs/${encodeURIComponent(posting.id)}`, query)}`;
+const resetPath = (query) =>
+  `#/${catalogPath('jobs', new URLSearchParams({ return_to: query?.get('return_to') || '' }))}`;
 const isExample = (posting) => posting.source_type === 'example' || posting.is_example === true;
 const sourceBadge = (posting) => `
   <span class="badge ${isExample(posting) ? 'neutral' : 'confirmed'}">
@@ -47,7 +54,7 @@ export function jobsLoading() {
   `;
 }
 
-export function jobsError(message) {
+export function jobsError(message, query) {
   return `
     <div class="catalog-state">
       <h1>공고를 불러오지 못했어요.</h1>
@@ -60,7 +67,7 @@ export function jobsError(message) {
       </button>
       <a
         class="back-link"
-        href="#/jobs">
+        href="#/${e(catalogPath('jobs', query))}">
         공고 목록으로
       </a>
     </div>
@@ -91,19 +98,19 @@ function renderCatalogFilter(name, label, values, query) {
   `;
 }
 
-function renderJobCard(posting) {
+function renderJobCard(posting, query) {
   return `
     <article class="job-card">
       ${sourceBadge(posting)}
       <p class="posting-company">${e(posting.company)}</p>
-      <h3><a href="${detailPath(posting)}">${e(posting.role)}</a></h3>
+      <h3><a href="${e(detailPath(posting, query))}">${e(posting.role)}</a></h3>
       ${metadata(posting)}
       ${skillTags(posting.skills)}
       <p class="posting-excerpt">${e(posting.description)}</p>
       <div class="job-card-actions">
         <a
           class="back-link"
-          href="${detailPath(posting)}">
+          href="${e(detailPath(posting, query))}">
           상세 보기 ${icon('arrow', 16)}
         </a>
         ${saveButton(posting)}
@@ -153,7 +160,7 @@ function renderCatalogSearch(filters, query, user) {
           저장한 공고만${user ? '' : ' · 로그인 필요'}
         </label>
         <a
-          href="#/jobs"
+          href="${e(resetPath(query))}"
           class="back-link">
           검색 초기화
         </a>
@@ -214,6 +221,7 @@ function renderCatalogPagination(data, query) {
 
 export function jobListPage(data, query, user) {
   const filters = data.filters || {};
+  const returnTo = catalogReturnPath(query.get('return_to'));
 
   return `
     ${renderPostingPhases('posting')}
@@ -222,9 +230,10 @@ export function jobListPage(data, query, user) {
         <h1>직무별 채용공고</h1>
         <p>공고에 기재된 직무로 분류해 관심 있는 일을 찾아보세요.</p>
       </div>
+      ${returnTo ? `<a class="button secondary compact" href="#/${e(returnTo)}">공고 선택으로 돌아가기</a>` : ''}
       <a
         class="button primary compact"
-        href="#/jobs/new">
+        href="#/${e(catalogPath('jobs/new', query))}">
         공고 직접 입력 ${icon('arrow', 17)}
       </a>
     </div>
@@ -244,7 +253,7 @@ export function jobListPage(data, query, user) {
       ${
         data.items.length
           ? `
-            <div class="job-grid">${data.items.map(renderJobCard).join('')}</div>
+            <div class="job-grid">${data.items.map((posting) => renderJobCard(posting, query)).join('')}</div>
           `
           : `
             <div class="catalog-state empty-results">
@@ -263,7 +272,7 @@ export function jobListPage(data, query, user) {
                 }
               </p>
               <a
-                href="#/jobs"
+                href="${e(resetPath(query))}"
                 class="button secondary compact">
                 전체 공고 보기
               </a>
@@ -275,14 +284,14 @@ export function jobListPage(data, query, user) {
   `;
 }
 
-export function jobDetailPage(posting, user) {
+export function jobDetailPage(posting, user, query) {
   const url = safeSourceUrl(posting.source_url);
   const own = user && posting.is_owner === true;
   return `
     ${renderPostingPhases('posting')}
     <div class="catalog-content job-detail">
       <a
-        href="#/jobs"
+        href="#/${e(catalogPath('jobs', query))}"
         class="back-link">
         ← 공고 목록
       </a>
@@ -347,7 +356,7 @@ export function jobDetailPage(posting, user) {
           ? `
             <div class="posting-owner-actions">
               <a
-                href="${detailPath(posting)}/edit"
+                href="#/${e(catalogPath(`jobs/${encodeURIComponent(posting.id)}/edit`, query))}"
                 class="button secondary compact">
                 공고 수정
               </a>
@@ -365,7 +374,7 @@ export function jobDetailPage(posting, user) {
   `;
 }
 
-export function postingEditorPage(draft = {}, id) {
+export function postingEditorPage(draft = {}, id, query) {
   const input = (name, label, placeholder, limit = 120) => `
     <div class="field">
       <label for="posting-${name}">${label}</label>
@@ -452,7 +461,7 @@ export function postingEditorPage(draft = {}, id) {
         </div>
         <div class="form-actions">
           <a
-            href="${id ? `#/jobs/${encodeURIComponent(id)}` : '#/jobs'}"
+            href="#/${e(catalogPath(id ? `jobs/${encodeURIComponent(id)}` : 'jobs', query))}"
             class="back-link">
             ${id ? '상세로 돌아가기' : '목록으로 돌아가기'}
           </a>

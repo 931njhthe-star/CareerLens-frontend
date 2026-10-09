@@ -9,9 +9,9 @@ export function opportunitiesPage() {
       <h1>어떤 공고에 지원해 볼까요?</h1>
       <p>희망 직무와 관련된 공고를 비교하고, 모의지원할 공고를 선택하세요.</p>
     </div><a class="back-link" href="#/desired-role">희망 직무 수정</a></div>
-    <section class="opportunities" aria-label="희망 직무별 채용공고">
+    <section id="opportunities-panel" class="opportunities" aria-label="희망 직무별 채용공고">
       <aside class="opportunities__sidebar" aria-label="채용공고 목록">
-        <div class="opportunities__list-heading">
+        <div id="opportunity-list-heading" class="opportunities__list-heading">
           <h2 id="opportunity-role">채용공고</h2>
           <div class="opportunity-scope">
             <label for="opportunity-scope">공고 표시 범위</label>
@@ -22,7 +22,8 @@ export function opportunitiesPage() {
             </select>
           </div>
           <p id="opportunity-count" role="status">목록을 불러오는 중…</p>
-          <a class="back-link" href="#/jobs">전체 직무별 공고 보기</a>
+          <a id="opportunity-catalog" class="back-link" href="#/jobs">전체 직무별 공고 보기</a>
+          <div id="opportunity-list-status" role="status" hidden></div>
         </div>
         <div id="opportunity-list" class="opportunities__list" aria-busy="true"></div>
         <nav id="opportunity-pagination" class="opportunities__pagination" aria-label="공고 페이지"></nav>
