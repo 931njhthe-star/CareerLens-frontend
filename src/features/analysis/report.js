@@ -261,12 +261,6 @@ export function analysisReport(draft) {
           <small id="report-save-status">${backend ? '분석 결과는 서버에 자동 기록됩니다. 별도 보관 기능은 준비 중입니다.' : '시연 결과입니다. 저장 기능은 준비 중입니다.'}</small>
         </div>
         ${draft.selected_posting_id ? `<a class="button secondary compact" href="#/${e(opportunityPath(draft.career_target || { role_id: 'custom', label: draft.role }))}">다른 공고로 모의지원</a>` : ''}
-        <button
-          type="button"
-          class="button secondary compact"
-          data-section="report-graphics">
-          그래픽 보기
-        </button>
       </div>
     </div>
     <div class="result-layout result-layout--studio">
