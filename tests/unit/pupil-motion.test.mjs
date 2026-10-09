@@ -11,6 +11,11 @@ import {
   projectEyePoint,
   pupilMotionFrame,
 } from '../../src/features/analysis/pupil-motion.js';
+import {
+  WORDMARK_BOUNDS,
+  WORDMARK_LETTERS,
+} from '../../src/features/analysis/wordmark-geometry.js';
+import { WORDMARK_REVEAL_MS } from '../../src/features/analysis/wordmark-motion.js';
 
 const frameAtYaw = (yaw) => pupilMotionFrame(
   EYE_DRAW_DELAY_MS + EYE_DRAW_MS + (yaw / (2 * Math.PI)) * EYE_YAW_MS,
@@ -176,16 +181,27 @@ test('outer and reactor rings advance in one direction with a slower reactor and
   }
 });
 
-test('the wordmark light breathes continuously within a bounded range', () => {
-  const lights = [];
-  for (let elapsed = PUPIL_ENTRY_MS; elapsed < 20000; elapsed += 100) {
-    const frame = pupilMotionFrame(elapsed);
-    const next = pupilMotionFrame(elapsed + 1);
-    assert.ok(frame.logoGlow >= 0 && frame.logoGlow <= 1);
-    assert.ok(Math.abs(next.logoGlow - frame.logoGlow) < 0.01);
-    lights.push(frame.logoGlow);
+test('the wordmark reveals along its outlines while the tracing light advances throughout the back face', () => {
+  for (const revolution of [0, 1, 4]) {
+    const turn = revolution * Math.PI * 2;
+    let previousReveal = 0;
+    for (let step = 0; step <= 120; step++) {
+      const frame = frameAtYaw(turn + Math.PI / 2 + (step / 120) * Math.PI);
+      assert.ok(frame.logoReveal >= 0 && frame.logoReveal <= 1);
+      assert.ok(frame.logoReveal >= previousReveal, 'the back face does not erase an already traced letter');
+      assert.ok(frame.logoReveal - previousReveal < 0.05, 'outlines grow without an abrupt reveal');
+      previousReveal = frame.logoReveal;
+    }
+    assert.equal(previousReveal, 1);
+    assert.equal(frameAtYaw(turn + Math.PI).logoReveal, 1);
+    for (let degrees = 91; degrees < 270; degrees += 11) {
+      const yaw = turn + (degrees / 180) * Math.PI;
+      const frame = frameAtYaw(yaw);
+      const next = frameAtYaw(yaw + 0.0001);
+      assert.ok(next.logoTravel > frame.logoTravel);
+      assert.ok(next.logoTravel - frame.logoTravel < 0.001);
+    }
   }
-  assert.ok(Math.max(...lights) - Math.min(...lights) > 0.25, 'the light changes instead of remaining a static label');
 });
 
 test('reduced motion renders a complete static pupil for any duration', () => {
@@ -229,6 +245,8 @@ function recordingContext() {
   });
   const context = new Proxy(
     {
+      globalAlpha: 1,
+      lineWidth: 1,
       clearRect(...rect) {
         clears.push(rect);
       },
@@ -237,6 +255,8 @@ function recordingContext() {
           matrix: [...matrix],
           fillStyle: this.fillStyle,
           strokeStyle: this.strokeStyle,
+          globalAlpha: this.globalAlpha,
+          lineWidth: this.lineWidth,
         });
       },
       restore() {
@@ -244,6 +264,8 @@ function recordingContext() {
         matrix = state.matrix;
         this.fillStyle = state.fillStyle;
         this.strokeStyle = state.strokeStyle;
+        this.globalAlpha = state.globalAlpha;
+        this.lineWidth = state.lineWidth;
       },
       transform,
       translate(x, y) {
@@ -279,10 +301,10 @@ function recordingContext() {
         }
       },
       stroke() {
-        strokes.push({ points: [...path], style: this.strokeStyle });
+        strokes.push({ points: [...path], style: this.strokeStyle, alpha: this.globalAlpha, width: this.lineWidth });
       },
       fill() {
-        fills.push({ points: [...path], style: this.fillStyle });
+        fills.push({ points: [...path], style: this.fillStyle, alpha: this.globalAlpha });
       },
       createRadialGradient: gradient,
       createLinearGradient: gradient,
@@ -311,28 +333,134 @@ test('the painter projects the lids around the vertical axis without banking the
   }
 });
 
-test('the flat eye, rings and glow share a single edge-on plane with no raised pupil', () => {
-  const { context, strokes, fills } = recordingContext();
+test('both quarter-turn handoffs retain visible light on one flat plane with no raised pupil', () => {
   const size = 360;
-  drawPupilFrame(context, size, frameAtYaw(Math.PI / 2));
-  const points = [...strokes, ...fills].flatMap((path) => path.points);
-  assert.ok(points.length > 0);
-  for (const { x, y } of points) {
-    assert.ok(Number.isFinite(x) && Number.isFinite(y));
-    assert.ok(Math.abs(x - size / 2) < 1e-8, 'all eye geometry collapses onto the same centerline');
+  for (const yaw of [Math.PI / 2, 3 * Math.PI / 2]) {
+    const { context, strokes, fills } = recordingContext();
+    drawPupilFrame(context, size, frameAtYaw(yaw));
+    const visible = [...strokes, ...fills].filter((path) => path.alpha > 1e-8);
+    const points = visible.flatMap((path) => path.points);
+    assert.ok(points.length > 0);
+    for (const { x, y } of points) {
+      assert.ok(Number.isFinite(x) && Number.isFinite(y));
+      assert.ok(Math.abs(x - size / 2) < 1e-8, 'visible geometry collapses onto the shared centerline');
+    }
+    const light = strokes.find(({ points, alpha, width }) =>
+      alpha > 0.25 && width > 0 && points.length >= 2 &&
+      Math.abs(points.at(-1).y - points[0].y) > size * 0.1);
+    assert.ok(light, 'nonzero opacity and a nonzero stroke length keep the canvas from blinking blank');
   }
 });
 
-test('logo frames clear the prior eye drawing without painting a mirrored eye behind the text', () => {
+test('logo frames clear the prior eye and paint traced glyph outlines with small light tips', () => {
   const { context, strokes, fills, clears } = recordingContext();
   const size = 360;
   drawPupilFrame(context, size, frameAtYaw(0));
   assert.ok(strokes.length > 0 && fills.length > 0);
   const painted = [strokes.length, fills.length];
   drawPupilFrame(context, size, frameAtYaw(Math.PI));
-  assert.deepEqual([strokes.length, fills.length], painted);
+  const logoStrokes = strokes.slice(painted[0]);
+  const logoFills = fills.slice(painted[1]);
+  assert.ok(logoStrokes.length >= WORDMARK_LETTERS.length, 'the back face is drawn on the canvas');
+  assert.equal(logoFills.length, WORDMARK_LETTERS.length, 'only the per-letter light tips are filled');
+  for (const fill of logoFills) {
+    const xs = fill.points.map(({ x }) => x);
+    const ys = fill.points.map(({ y }) => y);
+    assert.ok(Math.max(...xs) - Math.min(...xs) <= 3);
+    assert.ok(Math.max(...ys) - Math.min(...ys) <= 3, 'glyph bodies are not filled or blurred text');
+  }
+  for (const { points } of logoStrokes) {
+    assert.ok(points.every(({ y }) => Math.abs(y - size / 2) <= WORDMARK_BOUNDS.height * size / 2 + 0.01),
+      'no tall eye contour is painted behind the wordmark');
+  }
   assert.deepEqual(clears.at(-1), [0, 0, size, size]);
   assert.equal(clears.length, 2);
+});
+
+test('the light remains nonzero and continuous across both face handoffs', () => {
+  const inkAt = (yaw) => {
+    const { context, strokes } = recordingContext();
+    drawPupilFrame(context, 360, frameAtYaw(yaw));
+    return strokes.reduce((sum, { points, alpha, width }) => {
+      const length = points.reduce((distance, point, index) => index === 0 ? 0 :
+        distance + Math.hypot(point.x - points[index - 1].x, point.y - points[index - 1].y), 0);
+      return sum + length * alpha * width;
+    }, 0);
+  };
+  for (const edge of [Math.PI / 2, 3 * Math.PI / 2]) {
+    for (const delta of [-0.12, -0.06, -0.001, 0, 0.001, 0.06, 0.12]) {
+      assert.ok(inkAt(edge + delta) > 1, 'projected strokes retain visible length and opacity');
+    }
+    const before = inkAt(edge - 0.00001);
+    const middle = inkAt(edge);
+    const after = inkAt(edge + 0.00001);
+    assert.ok(Math.abs(before - middle) / middle < 0.02);
+    assert.ok(Math.abs(after - middle) / middle < 0.02, 'a face change does not reset the visible light');
+  }
+});
+
+test('the source outlines form readable Career Lens glyphs and fit the normalized scene', () => {
+  assert.equal(WORDMARK_LETTERS.map(({ character }) => character).join(''), 'CareerLens');
+  const points = WORDMARK_LETTERS.flatMap(({ contours }) => contours.flat());
+  const width = Math.max(...points.map(([x]) => x)) - Math.min(...points.map(([x]) => x));
+  const height = Math.max(...points.map(([, y]) => y)) - Math.min(...points.map(([, y]) => y));
+  assert.ok(Math.abs(width - WORDMARK_BOUNDS.width) < 0.000002);
+  assert.ok(Math.abs(height - WORDMARK_BOUNDS.height) < 0.000002);
+  let previousCenter = -Infinity;
+  for (const { contours } of WORDMARK_LETTERS) {
+    const xs = contours.flat().map(([x]) => x);
+    const center = (Math.min(...xs) + Math.max(...xs)) / 2;
+    assert.ok(center > previousCenter, 'glyph order runs from left to right');
+    previousCenter = center;
+    for (const contour of contours) {
+      assert.ok(contour.length >= 4);
+      assert.deepEqual(contour[0], contour.at(-1), 'sampled glyph outlines close without a seam');
+      for (const [x, y] of contour) {
+        assert.ok(Number.isFinite(x) && Number.isFinite(y));
+        assert.ok(Math.abs(x) < 0.45 && Math.abs(y) < 0.2);
+      }
+    }
+  }
+});
+
+test('painted glyph contours use the readable flat back projection rather than mirroring the letters', () => {
+  const size = 360;
+  for (const degrees of [150, 180, 225, 260]) {
+    const frame = frameAtYaw(degrees / 180 * Math.PI);
+    const { context, strokes } = recordingContext();
+    drawPupilFrame(context, size, frame);
+    for (const { contours } of WORDMARK_LETTERS) {
+      for (const contour of contours) {
+        const projected = contour.map(([x, y]) => {
+          const point = projectEyePoint({ x, y }, frame.logoYaw);
+          return { x: size / 2 + point.x * size, y: size / 2 + point.y * size };
+        });
+        const traced = strokes.find(({ points }) => points.length === projected.length &&
+          points.every((point, index) => Math.hypot(point.x - projected[index].x, point.y - projected[index].y) < 1e-7));
+        assert.ok(traced, `glyph outline is projected onto its readable plane at ${degrees} degrees`);
+      }
+    }
+  }
+});
+
+test('tracing tips do not jump when a newly drawn letter becomes a continuously lit outline', () => {
+  const backBegins = EYE_DRAW_DELAY_MS + EYE_DRAW_MS + EYE_YAW_MS / 4;
+  let previous = [];
+  for (let elapsed = 100; elapsed <= WORDMARK_REVEAL_MS + 400; elapsed += 20) {
+    const { context, fills } = recordingContext();
+    drawPupilFrame(context, 360, pupilMotionFrame(backBegins + elapsed));
+    const tips = fills.map(({ points }) => {
+      const xs = points.map(({ x }) => x);
+      const ys = points.map(({ y }) => y);
+      return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
+    });
+    for (let i = 0; i < previous.length; i++) {
+      assert.ok(Math.hypot(tips[i].x - previous[i].x, tips[i].y - previous[i].y) < 8,
+        'a pen tip follows its outline instead of teleporting to an unrelated tracing phase');
+    }
+    previous = tips;
+  }
+  assert.equal(previous.length, WORDMARK_LETTERS.length);
 });
 
 test('all painted contours, rings and glow stay within the canvas over a full yaw revolution', () => {
@@ -342,10 +470,6 @@ test('all painted contours, rings and glow stay within the canvas over a full ya
     const frame = pupilMotionFrame(EYE_DRAW_DELAY_MS + EYE_DRAW_MS + (step / 48) * EYE_YAW_MS);
     drawPupilFrame(context, size, frame);
     const points = [...strokes, ...fills].flatMap((path) => path.points);
-    if (frame.face === 'logo') {
-      assert.equal(points.length, 0);
-      continue;
-    }
     assert.ok(points.length > 0);
     for (const { x, y } of points) {
       assert.ok(Number.isFinite(x) && Number.isFinite(y));

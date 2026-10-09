@@ -69,33 +69,6 @@
   pointer-events: none;
 }
 
-.live-analysis-motion {
-  position: relative;
-}
-
-.live-analysis-wordmark {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backface-visibility: hidden;
-  transform-origin: center;
-  pointer-events: none;
-  color: #357db7;
-  font-family: var(--font);
-  font-weight: 650;
-  letter-spacing: -0.035em;
-  line-height: 1.2;
-  white-space: nowrap;
-  text-shadow: 0 0 6px rgb(113 204 242 / 42%), 0 0 20px rgb(119 213 250 / 28%);
-}
-
-.live-analysis-wordmark b {
-  color: #349bc4;
-  font-weight: inherit;
-}
-
 .report-loading-percent {
   margin: -2px 0 24px;
   color: #285ca9;

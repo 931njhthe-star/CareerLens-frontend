@@ -139,11 +139,9 @@ test('hidden tabs stop drawing and resume pupil rotation and eye yaw without jum
   const visibleAt = EYE_DRAW_DELAY_MS + EYE_DRAW_MS + EYE_YAW_MS / 2;
   fixture.setNow(visibleAt);
   fixture.window.dispatch('resize');
-  const wordmark = fixture.eye.element.children.find((node) => node.className === 'live-analysis-wordmark');
-  assert.equal(wordmark.style.visibility, 'visible');
-  const transform = wordmark.style.transform;
-  const rotation = fixture.frames.at(-1).rotation;
-  const eyeYaw = fixture.frames.at(-1).eyeYaw;
+  const visibleFrame = fixture.frames.at(-1);
+  assert.equal(visibleFrame.face, 'logo');
+  const scene = fixture.eye.scene;
   fixture.document.hidden = true;
   fixture.document.dispatch('visibilitychange');
   assert.equal(fixture.raf.size, 0);
@@ -151,13 +149,11 @@ test('hidden tabs stop drawing and resume pupil rotation and eye yaw without jum
   fixture.setNow(visibleAt + 4000);
   fixture.window.dispatch('resize');
   assert.equal(fixture.frames.length, count);
-  assert.equal(wordmark.style.transform, transform);
+  assert.equal(fixture.eye.scene, scene);
   fixture.document.hidden = false;
   fixture.document.dispatch('visibilitychange');
-  assert.equal(fixture.frames.at(-1).rotation, rotation);
-  assert.equal(fixture.frames.at(-1).eyeYaw, eyeYaw);
-  assert.equal(wordmark.style.transform, transform);
-  assert.equal(wordmark.style.visibility, 'visible');
+  assert.deepEqual(fixture.frames.at(-1), visibleFrame, 'every traced layer resumes at its paused phase');
+  assert.equal(fixture.eye.scene, scene);
   assert.equal(fixture.raf.size, 1);
   fixture.eye.dispose();
   assert.equal(fixture.raf.size, 0);
@@ -165,30 +161,28 @@ test('hidden tabs stop drawing and resume pupil rotation and eye yaw without jum
   assert.equal(fixture.document.listeners.size, 0);
   assert.equal(fixture.window.listeners.size, 0);
   assert.equal(fixture.preference.listeners.size, 0);
-  assert.equal(fixture.host.children.length, 0, 'disposing removes both decorative faces');
+  assert.equal(fixture.host.children.length, 0, 'disposing removes the canvas containing both faces');
 });
 
-test('the wordmark alternates with the eye while loading progress remains separate and monotonic', () => {
+test('one canvas persists through both faces and edge-on turns while progress remains separate and monotonic', () => {
   const fixture = motionFixture();
   const element = fixture.eye.element;
-  const wordmark = element.children.find((node) => node.className === 'live-analysis-wordmark');
-  assert.ok(wordmark);
-  assert.equal(wordmark.innerHTML.replace(/<[^>]+>/g, ''), 'Career Lens');
-  assert.equal(wordmark.getAttribute('aria-hidden'), 'true');
+  const scene = fixture.eye.scene;
+  assert.equal(element.children.length, 1, 'a separately toggled DOM wordmark cannot flash at face changes');
+  assert.equal(element.children[0], scene);
   assert.equal(fixture.eye.scene.getAttribute('aria-hidden'), 'true');
   const started = EYE_DRAW_DELAY_MS + EYE_DRAW_MS;
-  for (const degrees of [0, 45, 89, 91, 180, 269, 271, 360, 540]) {
+  for (const degrees of [0, 45, 89, 90, 91, 180, 269, 270, 271, 360, 540]) {
     fixture.setNow(started + (degrees / 360) * EYE_YAW_MS);
     fixture.window.dispatch('resize');
     const frame = fixture.frames.at(-1);
-    const isLogo = frame.face === 'logo';
     assert.equal(element.dataset.face, frame.face);
-    assert.equal(wordmark.style.visibility, isLogo ? 'visible' : 'hidden');
-    const yaw = Number(wordmark.style.transform.match(/rotateY\(([^)]+)rad\)/)?.[1]);
-    assert.ok(Number.isFinite(yaw));
-    assert.ok(Math.abs(yaw - frame.logoYaw) < 1e-10);
-    if (isLogo) assert.ok(Math.cos(yaw) > 0, 'the visible wordmark is never mirrored');
-    assert.ok(Number(wordmark.style.opacity) >= 0 && Number(wordmark.style.opacity) <= 1);
+    assert.equal(Number(element.dataset.logoReveal), frame.logoReveal);
+    assert.equal(element.children.length, 1);
+    assert.equal(element.children[0], scene, 'both faces use the original canvas without swapping nodes');
+    assert.equal(scene.style.visibility, undefined, 'the drawing surface stays visible at quarter turns');
+    assert.equal(scene.style.display, undefined);
+    if (frame.face === 'logo') assert.ok(Math.cos(frame.logoYaw) > 0, 'the wordmark faces forward');
     assert.equal(element.style.transform, undefined, 'the outer loading container is not rotated');
     assert.equal(element.dataset.loading, 'true');
     assert.equal(Number(element.dataset.percent), fixture.progress.at(-1));
@@ -207,7 +201,8 @@ test('reduced motion uses timed progress updates instead of an animation-frame l
   assert.equal(fixture.frames.at(-1).rotation, 0);
   assert.equal(fixture.frames.at(-1).eyeYaw, 0);
   assert.equal(fixture.frames.at(-1).face, 'eye');
-  assert.equal(fixture.eye.element.children.find((node) => node.className === 'live-analysis-wordmark').style.visibility, 'hidden');
+  assert.equal(fixture.eye.element.children.length, 1);
+  assert.equal(fixture.eye.element.children[0], fixture.eye.scene);
   fixture.eye.dispose();
   assert.equal(fixture.timers.size, 0);
   await fixture.eye.whenSettled();
@@ -217,13 +212,13 @@ test('enabling reduced motion on the logo face restores a static eye and cleans 
   const fixture = motionFixture();
   fixture.setNow(EYE_DRAW_DELAY_MS + EYE_DRAW_MS + EYE_YAW_MS / 2);
   fixture.window.dispatch('resize');
-  const wordmark = fixture.eye.element.children.find((node) => node.className === 'live-analysis-wordmark');
-  assert.equal(wordmark.style.visibility, 'visible');
+  const scene = fixture.eye.scene;
+  assert.equal(fixture.frames.at(-1).face, 'logo');
   fixture.preference.matches = true;
   fixture.preference.dispatch('change');
   assert.equal(fixture.frames.at(-1).face, 'eye');
   assert.equal(fixture.frames.at(-1).eyeYaw, 0);
-  assert.equal(wordmark.style.visibility, 'hidden');
+  assert.equal(fixture.eye.element.children[0], scene);
   assert.equal(fixture.raf.size, 0);
   assert.equal(fixture.timers.size, 1);
   assert.ok(fixture.progress.at(-1) < 100);
@@ -232,7 +227,7 @@ test('enabling reduced motion on the logo face restores a static eye and cleans 
   assert.equal(fixture.host.children.length, 0);
 });
 
-test('completion on the logo face reaches 100 and stops work before both faces are disposed', async () => {
+test('completion on the logo face reaches 100 and stops work before the shared canvas is disposed', async () => {
   const fixture = motionFixture();
   const completedAt = EYE_DRAW_DELAY_MS + EYE_DRAW_MS + EYE_YAW_MS / 2;
   fixture.setNow(completedAt);

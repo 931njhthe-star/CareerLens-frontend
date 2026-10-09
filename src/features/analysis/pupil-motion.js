@@ -1,3 +1,6 @@
+import { drawWordmark, WORDMARK_REVEAL_MS, WORDMARK_TRACE_MS } from './wordmark-motion.js';
+import { WORDMARK_BOUNDS } from './wordmark-geometry.js';
+
 const TAU = Math.PI * 2;
 export const PUPIL_ENTRY_MS = 1100;
 export const PUPIL_ROTATION_MS = 24000;
@@ -19,6 +22,8 @@ export function pupilMotionFrame(elapsed, { reduced = false } = {}) {
   const eyeYaw = reduced
     ? 0
     : (Math.max(0, time - EYE_DRAW_DELAY_MS - EYE_DRAW_MS) / EYE_YAW_MS) * TAU;
+  const phase = eyeYaw % TAU;
+  const logoTime = reduced ? 0 : Math.max(0, (phase - Math.PI / 2) * EYE_YAW_MS / TAU);
   return {
     scale: reduced ? 1 : smooth(time / PUPIL_ENTRY_MS),
     opacity: reduced ? 1 : smooth(time / 440),
@@ -28,7 +33,8 @@ export function pupilMotionFrame(elapsed, { reduced = false } = {}) {
     face: Math.cos(eyeYaw) < 0 ? 'logo' : 'eye',
     // The back face is pre-turned by half a revolution, so its lettering is never mirrored.
     logoYaw: eyeYaw - Math.PI,
-    logoGlow: reduced ? 0.7 : 0.5 + 0.5 * Math.sin(seconds * TAU / 7),
+    logoReveal: clamp(logoTime / WORDMARK_REVEAL_MS),
+    logoTravel: logoTime / WORDMARK_TRACE_MS,
     outer: seconds * 0.14,
     dashes: 1.8 * Math.sin((moving / 8200) * TAU),
     innerDashes: 1.55 * (Math.sin((moving / 11300) * TAU + 1.1) - Math.sin(1.1)),
@@ -91,23 +97,50 @@ function drawEyeContour(context, size, progress, project, visibility) {
   }
 }
 
-/** One flat eye face yaws in perspective; the DOM wordmark occupies its reverse face. */
+function drawTurnSeam(context, size, cosine, opacity) {
+  const strength = 1 - smooth(Math.abs(cosine) / 0.16);
+  if (!strength) return;
+  // A single edge passes the light between faces. It cannot vanish at the handoff,
+  // and does not stack the many iris strokes into a bright, thick vertical stripe.
+  const logoMix = smooth((0.16 - cosine) / 0.32);
+  const height = size * (0.40 + (WORDMARK_BOUNDS.height - 0.40) * logoMix);
+  const gradient = context.createLinearGradient(0, -height / 2, 0, height / 2);
+  gradient.addColorStop(0, 'rgba(90,188,245,0)');
+  gradient.addColorStop(0.22, '#72cbf4');
+  gradient.addColorStop(0.55, '#3591db');
+  gradient.addColorStop(0.8, '#72cbf4');
+  gradient.addColorStop(1, 'rgba(90,188,245,0)');
+  context.globalAlpha = strength * opacity * 0.9;
+  context.strokeStyle = gradient;
+  context.shadowColor = '#78cdff';
+  context.shadowBlur = 5;
+  context.lineWidth = 1.1;
+  context.beginPath();
+  context.moveTo(0, -height / 2);
+  context.lineTo(0, height / 2);
+  context.stroke();
+  context.shadowBlur = 0;
+}
+
+/** Both flat faces and their shared luminous edge are painted in a single frame. */
 export function drawPupilFrame(context, size, frame) {
   context.clearRect(0, 0, size, size);
   if (frame.scale <= 0) return;
   const radius = 0.155 * frame.scale;
   const cosine = Math.cos(frame.eyeYaw);
   const sine = Math.sin(frame.eyeYaw);
-  // Clear the front when the reverse face turns into view. Keep the canvas mounted
-  // so the report transition and upright percentage retain their stable geometry.
-  if (cosine < 0) return;
-  // Soften only the final 2.3 degrees at either edge, avoiding a stacked stroke seam.
-  const visibility = smooth(cosine / 0.04);
-  frame = { ...frame, opacity: frame.opacity * visibility };
-  const project = (point) => projectWithYaw(point, cosine, sine);
+  const visibility = smooth(Math.abs(cosine) / 0.16);
   context.save();
   context.translate(size / 2, size / 2);
   context.lineCap = 'round';
+  drawTurnSeam(context, size, cosine, frame.opacity);
+  if (cosine < 0) {
+    drawWordmark(context, size, frame, (point) => projectWithYaw(point, -cosine, -sine), visibility);
+    context.restore();
+    return;
+  }
+  frame = { ...frame, opacity: frame.opacity * visibility };
+  const project = (point) => projectWithYaw(point, cosine, sine);
   drawEyeContour(context, size, frame.outline, project, visibility);
   context.globalAlpha = frame.opacity;
 
