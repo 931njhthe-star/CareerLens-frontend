@@ -115,11 +115,12 @@ function motionFixture({ reduced = false } = {}) {
   return { eye, raf, timers, frames, document, window, preference, setNow: (value) => (now = value) };
 }
 
-test('hidden tabs stop drawing and resume the pupil without jumping rotation', () => {
+test('hidden tabs stop drawing and resume pupil rotation and eye yaw without jumping', () => {
   const fixture = motionFixture();
   fixture.setNow(2500);
   fixture.window.dispatch('resize');
   const rotation = fixture.frames.at(-1).rotation;
+  const eyeYaw = fixture.frames.at(-1).eyeYaw;
   fixture.document.hidden = true;
   fixture.document.dispatch('visibilitychange');
   assert.equal(fixture.raf.size, 0);
@@ -130,6 +131,7 @@ test('hidden tabs stop drawing and resume the pupil without jumping rotation', (
   fixture.document.hidden = false;
   fixture.document.dispatch('visibilitychange');
   assert.equal(fixture.frames.at(-1).rotation, rotation);
+  assert.equal(fixture.frames.at(-1).eyeYaw, eyeYaw);
   assert.equal(fixture.raf.size, 1);
   fixture.eye.dispose();
   assert.equal(fixture.raf.size, 0);
@@ -145,6 +147,7 @@ test('reduced motion uses timed progress updates instead of an animation-frame l
   assert.equal(fixture.timers.size, 1);
   assert.equal([...fixture.timers.values()][0].delay, 250);
   assert.equal(fixture.frames.at(-1).rotation, 0);
+  assert.equal(fixture.frames.at(-1).eyeYaw, 0);
   fixture.eye.dispose();
   assert.equal(fixture.timers.size, 0);
   await fixture.eye.whenSettled();

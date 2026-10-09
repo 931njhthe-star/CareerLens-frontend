@@ -66,7 +66,7 @@ export class LiveAnalysisClock {
   }
 }
 
-/** A bounded eye canvas. The accessible percentage remains outside its rotation. */
+/** A bounded 3D eye canvas. The accessible percentage remains outside its Y-axis turn. */
 export function mountLiveAnalysisEye(host, { onProgress } = {}) {
   const element = document.createElement('div');
   element.className = 'live-analysis-motion';
@@ -111,7 +111,7 @@ export function mountLiveAnalysisEye(host, { onProgress } = {}) {
     element.dataset.percent = String(loading.percent);
     element.dataset.loading = String(loading.active);
     element.dataset.rotation = String(frame.rotation);
-    element.dataset.eyeRotation = String(frame.eyeRotation);
+    element.dataset.eyeYaw = String(frame.eyeYaw);
     element.dataset.outline = String(frame.outline);
     element.dataset.stage = frame.scale < 1 ? 'entry' : 'analysis';
     if (lastPercent !== loading.percent) {

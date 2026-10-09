@@ -3,7 +3,8 @@ export const PUPIL_ENTRY_MS = 1100;
 export const PUPIL_ROTATION_MS = 24000;
 export const EYE_DRAW_MS = 1600;
 export const EYE_DRAW_DELAY_MS = 180;
-export const EYE_ROTATION_MS = 90000;
+export const EYE_YAW_MS = 40000;
+const CAMERA_DISTANCE = 2.5;
 const clamp = (value) => Math.max(0, Math.min(1, value));
 const smooth = (value) => {
   const t = clamp(value);
@@ -20,9 +21,9 @@ export function pupilMotionFrame(elapsed, { reduced = false } = {}) {
     opacity: reduced ? 1 : smooth(time / 440),
     rotation: (moving / PUPIL_ROTATION_MS) * TAU,
     outline: reduced ? 1 : smooth((time - EYE_DRAW_DELAY_MS) / EYE_DRAW_MS),
-    eyeRotation: reduced
+    eyeYaw: reduced
       ? 0
-      : (Math.max(0, time - EYE_DRAW_DELAY_MS - EYE_DRAW_MS) / EYE_ROTATION_MS) * TAU,
+      : (Math.max(0, time - EYE_DRAW_DELAY_MS - EYE_DRAW_MS) / EYE_YAW_MS) * TAU,
     outer: seconds * 0.14,
     dashes: 1.8 * Math.sin((moving / 8200) * TAU),
     innerDashes: 1.55 * (Math.sin((moving / 11300) * TAU + 1.1) - Math.sin(1.1)),
@@ -46,14 +47,27 @@ export function eyeContourPoint(progress, upper = true) {
   };
 }
 
-function drawEyeContour(context, size, progress) {
+function projectWithYaw({ x, y, z = 0 }, cosine, sine) {
+  const turnedX = x * cosine + z * sine;
+  const turnedZ = -x * sine + z * cosine;
+  const scale = CAMERA_DISTANCE / (CAMERA_DISTANCE - turnedZ);
+  return { x: turnedX * scale, y: y * scale, z: turnedZ, scale };
+}
+
+/** Normalized coordinates turn toward the right around the vertical axis. */
+export function projectEyePoint(point, yaw = 0) {
+  return projectWithYaw(point, Math.cos(yaw), Math.sin(yaw));
+}
+
+function drawEyeContour(context, size, progress, project) {
   if (progress <= 0) return;
   // Sample only the visible length: each contour grows from its own eye corner.
   for (const upper of [true, false]) {
     const steps = Math.max(1, Math.ceil(progress * 80));
     context.beginPath();
     for (let step = 0; step <= steps; step++) {
-      const point = eyeContourPoint((step / steps) * progress, upper);
+      const t = (step / steps) * progress;
+      const point = project({ ...eyeContourPoint(t, upper), z: 0.04 * Math.sin(Math.PI * t) });
       if (step === 0) context.moveTo(point.x * size, point.y * size);
       else context.lineTo(point.x * size, point.y * size);
     }
@@ -71,110 +85,121 @@ function drawEyeContour(context, size, progress) {
   }
 }
 
-/** An independently rotating eye surrounds the pupil; no side fibres or image assets. */
+/** The whole eye yaws in perspective; pupil layers keep their independent planar motion. */
 export function drawPupilFrame(context, size, frame) {
   context.clearRect(0, 0, size, size);
   if (frame.scale <= 0) return;
-  const radius = size * 0.155;
+  const radius = 0.155 * frame.scale;
+  const cosine = Math.cos(frame.eyeYaw);
+  const sine = Math.sin(frame.eyeYaw);
+  const project = (point) => projectWithYaw(point, cosine, sine);
   context.save();
   context.translate(size / 2, size / 2);
-  context.rotate(frame.eyeRotation);
   context.lineCap = 'round';
-  drawEyeContour(context, size, frame.outline);
-  context.save();
-  context.scale(frame.scale, frame.scale);
-  context.rotate(frame.rotation);
+  drawEyeContour(context, size, frame.outline, project);
   context.globalAlpha = frame.opacity;
-  context.lineCap = 'round';
 
-  const ring = (r, start, end, color, width = 1, alpha = 1) => {
+  const pointAt = (r, angle, depth) => project({
+    x: Math.cos(angle) * radius * r,
+    y: Math.sin(angle) * radius * r,
+    z: depth * frame.scale,
+  });
+  const ring = (r, start, end, depth, rotation, color, width = 1, alpha = 1) => {
     context.globalAlpha = frame.opacity * alpha;
     context.strokeStyle = color;
-    context.lineWidth = width;
+    context.lineWidth = width * frame.scale;
     context.beginPath();
-    context.arc(0, 0, radius * r, start, end);
+    const steps = Math.max(2, Math.ceil(((end - start) / TAU) * 96));
+    for (let step = 0; step <= steps; step++) {
+      const point = pointAt(r, start + ((end - start) * step) / steps + rotation, depth);
+      if (step === 0) context.moveTo(point.x * size, point.y * size);
+      else context.lineTo(point.x * size, point.y * size);
+    }
     context.stroke();
   };
-  const halo = context.createRadialGradient(0, 0, radius * 0.15, 0, 0, radius * 1.15);
-  halo.addColorStop(0, 'rgba(207,244,255,0.20)');
-  halo.addColorStop(0.46, 'rgba(213,237,255,0.16)');
-  halo.addColorStop(1, 'rgba(234,247,255,0)');
-  context.fillStyle = halo;
-  context.beginPath();
-  context.arc(0, 0, radius * 1.15, 0, TAU);
-  context.fill();
 
-  context.save();
-  context.rotate(frame.outer);
-  ring(1, 0, TAU, '#86c9ef', 1, 0.62);
-  ring(0.958, 0, TAU, '#4b89ce', 1.15, 0.82);
-  ring(0.925, 0, TAU, '#addcff', 0.7, 0.65);
+  // Project each soft light field on its own iris plane. The affine gradient
+  // uses the perspective derivative at its center, so even the glow turns edge-on.
+  const lightField = (r, depth, stops) => {
+    const z = depth * frame.scale;
+    const center = project({ x: 0, y: 0, z });
+    const stretchX = cosine * center.scale
+      - (z * sine * sine * center.scale * center.scale) / CAMERA_DISTANCE;
+    context.save();
+    context.transform(stretchX, 0, 0, center.scale, center.x * size, center.y * size);
+    const lightRadius = radius * r * size;
+    const gradient = context.createRadialGradient(0, 0, 0, 0, 0, lightRadius);
+    for (const [offset, color] of stops) gradient.addColorStop(offset, color);
+    context.globalAlpha = frame.opacity;
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.arc(0, 0, lightRadius, 0, TAU);
+    context.fill();
+    context.restore();
+  };
+  lightField(1.15, 0.025, [
+    [0, 'rgba(207,244,255,0.20)'],
+    [0.46, 'rgba(213,237,255,0.16)'],
+    [1, 'rgba(234,247,255,0)'],
+  ]);
+
+  const outerRotation = frame.rotation + frame.outer;
+  ring(1, 0, TAU, 0.025, outerRotation, '#86c9ef', 1, 0.62);
+  ring(0.958, 0, TAU, 0.025, outerRotation, '#4b89ce', 1.15, 0.82);
+  ring(0.925, 0, TAU, 0.025, outerRotation, '#addcff', 0.7, 0.65);
   for (let i = 0; i < 72; i++) {
-    const angle = (i / 72) * TAU;
+    const angle = (i / 72) * TAU + outerRotation;
     const major = i % 6 === 0;
     const length = major ? 0.075 : 0.037;
     context.globalAlpha = frame.opacity * (major ? 0.73 : 0.27);
     context.strokeStyle = major ? '#397dd0' : '#69b8e8';
-    context.lineWidth = major ? 1.25 : 0.85;
+    context.lineWidth = (major ? 1.25 : 0.85) * frame.scale;
     context.beginPath();
-    context.moveTo(Math.cos(angle) * radius * 1.06, Math.sin(angle) * radius * 1.06);
-    context.lineTo(
-      Math.cos(angle) * radius * (1.06 + length),
-      Math.sin(angle) * radius * (1.06 + length),
-    );
+    const start = pointAt(1.06, angle, 0.025);
+    const end = pointAt(1.06 + length, angle, 0.025);
+    context.moveTo(start.x * size, start.y * size);
+    context.lineTo(end.x * size, end.y * size);
     context.stroke();
   }
   for (const start of [0.28, 2.1, 4.48]) {
-    ring(1, start, start + 0.3, '#3679ce', 2, 0.9);
-    ring(0.958, start + 0.11, start + 0.31, '#b4eeff', 2, 0.9);
+    ring(1, start, start + 0.3, 0.025, outerRotation, '#3679ce', 2, 0.9);
+    ring(0.958, start + 0.11, start + 0.31, 0.025, outerRotation, '#b4eeff', 2, 0.9);
   }
-  context.restore();
 
-  context.save();
-  context.rotate(frame.dashes);
+  const dashRotation = frame.rotation + frame.dashes;
   for (let i = 0; i < 18; i++) {
     const start = (i / 18) * TAU;
-    ring(0.805, start, start + (i % 3 === 0 ? 0.12 : 0.225), '#3377c5', 1.45, 0.8);
+    ring(0.805, start, start + (i % 3 === 0 ? 0.12 : 0.225), 0.04, dashRotation, '#3377c5', 1.45, 0.8);
   }
-  ring(0.855, 0, TAU, '#a4d2ed', 0.65, 0.7);
-  context.restore();
+  ring(0.855, 0, TAU, 0.04, dashRotation, '#a4d2ed', 0.65, 0.7);
 
-  context.save();
-  context.rotate(frame.innerDashes);
+  const innerRotation = frame.rotation + frame.innerDashes;
   for (let i = 0; i < 12; i++) {
     const start = (i / 12) * TAU;
-    ring(0.688, start, start + (i % 3 === 1 ? 0.1 : 0.34), '#57aee0', 1.1, 0.8);
+    ring(0.688, start, start + (i % 3 === 1 ? 0.1 : 0.34), 0.052, innerRotation, '#57aee0', 1.1, 0.8);
   }
   for (let i = 0; i < 64; i++) {
     const start = (i / 64) * TAU;
-    ring(0.615, start, start + 0.013, '#397cc1', 1, 0.55);
+    ring(0.615, start, start + 0.013, 0.052, innerRotation, '#397cc1', 1, 0.55);
   }
-  context.restore();
 
-  context.save();
-  context.rotate(frame.reactor);
-  ring(0.505, 0, TAU, '#8bd2f1', 0.8, 0.45);
+  const reactorRotation = frame.rotation + frame.reactor;
+  ring(0.505, 0, TAU, 0.067, reactorRotation, '#8bd2f1', 0.8, 0.45);
   for (let i = 0; i < 28; i++) {
     const start = (i / 28) * TAU;
     const light = (0.5 + 0.5 * Math.cos(start - frame.lights)) ** 3;
     context.shadowColor = '#65d6f3';
     context.shadowBlur = light * 9;
-    ring(0.456, start, start + 0.137, '#44b9df', 4.5, 0.32 + 0.68 * light);
+    ring(0.456, start, start + 0.137, 0.067, reactorRotation, '#44b9df', 4.5, 0.32 + 0.68 * light);
   }
   context.shadowBlur = 0;
-  context.restore();
 
-  const core = context.createRadialGradient(0, 0, 0, 0, 0, radius * 0.38);
-  core.addColorStop(0, 'rgba(255,255,255,1)');
-  core.addColorStop(0.36, 'rgba(215,251,255,0.8)');
-  core.addColorStop(0.7, `rgba(101,216,244,${0.21 + frame.pulse * 0.14})`);
-  core.addColorStop(1, 'rgba(130,217,255,0)');
-  context.globalAlpha = frame.opacity;
-  context.fillStyle = core;
-  context.beginPath();
-  context.arc(0, 0, radius * 0.38, 0, TAU);
-  context.fill();
+  lightField(0.38, 0.075, [
+    [0, 'rgba(255,255,255,1)'],
+    [0.36, 'rgba(215,251,255,0.8)'],
+    [0.7, `rgba(101,216,244,${0.21 + frame.pulse * 0.14})`],
+    [1, 'rgba(130,217,255,0)'],
+  ]);
   // The center is only a fading light field, without a circular stroke or hard edge.
-  context.restore();
   context.restore();
 }
