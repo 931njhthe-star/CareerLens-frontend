@@ -66,7 +66,7 @@ export class LiveAnalysisClock {
   }
 }
 
-/** A bounded original pupil canvas. The accessible percentage lives below it in the modal. */
+/** A bounded eye canvas. The accessible percentage remains outside its rotation. */
 export function mountLiveAnalysisEye(host, { onProgress } = {}) {
   const element = document.createElement('div');
   element.className = 'live-analysis-motion';
@@ -111,6 +111,8 @@ export function mountLiveAnalysisEye(host, { onProgress } = {}) {
     element.dataset.percent = String(loading.percent);
     element.dataset.loading = String(loading.active);
     element.dataset.rotation = String(frame.rotation);
+    element.dataset.eyeRotation = String(frame.eyeRotation);
+    element.dataset.outline = String(frame.outline);
     element.dataset.stage = frame.scale < 1 ? 'entry' : 'analysis';
     if (lastPercent !== loading.percent) {
       lastPercent = loading.percent;
@@ -119,7 +121,7 @@ export function mountLiveAnalysisEye(host, { onProgress } = {}) {
   }
   function resize() {
     if (disposed) return;
-    size = Math.max(120, Math.min(360, element.clientWidth || 320));
+    size = Math.max(120, Math.min(520, element.clientWidth || 320));
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.round(size * dpr);
     canvas.height = Math.round(size * dpr);

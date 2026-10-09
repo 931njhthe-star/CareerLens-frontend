@@ -1,6 +1,9 @@
 const TAU = Math.PI * 2;
 export const PUPIL_ENTRY_MS = 1100;
 export const PUPIL_ROTATION_MS = 24000;
+export const EYE_DRAW_MS = 1600;
+export const EYE_DRAW_DELAY_MS = 180;
+export const EYE_ROTATION_MS = 90000;
 const clamp = (value) => Math.max(0, Math.min(1, value));
 const smooth = (value) => {
   const t = clamp(value);
@@ -16,6 +19,10 @@ export function pupilMotionFrame(elapsed, { reduced = false } = {}) {
     scale: reduced ? 1 : smooth(time / PUPIL_ENTRY_MS),
     opacity: reduced ? 1 : smooth(time / 440),
     rotation: (moving / PUPIL_ROTATION_MS) * TAU,
+    outline: reduced ? 1 : smooth((time - EYE_DRAW_DELAY_MS) / EYE_DRAW_MS),
+    eyeRotation: reduced
+      ? 0
+      : (Math.max(0, time - EYE_DRAW_DELAY_MS - EYE_DRAW_MS) / EYE_ROTATION_MS) * TAU,
     outer: seconds * 0.14,
     dashes: 1.8 * Math.sin((moving / 8200) * TAU),
     innerDashes: 1.55 * (Math.sin((moving / 11300) * TAU + 1.1) - Math.sin(1.1)),
@@ -25,13 +32,56 @@ export function pupilMotionFrame(elapsed, { reduced = false } = {}) {
   };
 }
 
-/** A restrained halo and concentric rings; no image assets or mirrored side fibres. */
+/** Upper lid starts at the left corner; lower lid starts at the right corner. */
+export function eyeContourPoint(progress, upper = true) {
+  const t = clamp(progress);
+  const u = 1 - t;
+  const points = upper
+    ? [[-0.435, 0], [-0.185, -0.265], [0.16, -0.295], [0.435, 0]]
+    : [[0.435, 0], [0.18, 0.255], [-0.19, 0.25], [-0.435, 0]];
+  const weights = [u ** 3, 3 * u * u * t, 3 * u * t * t, t ** 3];
+  return {
+    x: points.reduce((sum, point, index) => sum + point[0] * weights[index], 0),
+    y: points.reduce((sum, point, index) => sum + point[1] * weights[index], 0),
+  };
+}
+
+function drawEyeContour(context, size, progress) {
+  if (progress <= 0) return;
+  // Sample only the visible length: each contour grows from its own eye corner.
+  for (const upper of [true, false]) {
+    const steps = Math.max(1, Math.ceil(progress * 80));
+    context.beginPath();
+    for (let step = 0; step <= steps; step++) {
+      const point = eyeContourPoint((step / steps) * progress, upper);
+      if (step === 0) context.moveTo(point.x * size, point.y * size);
+      else context.lineTo(point.x * size, point.y * size);
+    }
+    context.strokeStyle = '#63abd9';
+    context.lineWidth = 1.35;
+    context.globalAlpha = 0.8;
+    context.shadowColor = '#8bdcff';
+    context.shadowBlur = 5;
+    context.stroke();
+    context.shadowBlur = 0;
+    context.strokeStyle = '#beeaff';
+    context.lineWidth = 0.55;
+    context.globalAlpha = 0.7;
+    context.stroke();
+  }
+}
+
+/** An independently rotating eye surrounds the pupil; no side fibres or image assets. */
 export function drawPupilFrame(context, size, frame) {
   context.clearRect(0, 0, size, size);
   if (frame.scale <= 0) return;
-  const radius = size * 0.365;
+  const radius = size * 0.155;
   context.save();
   context.translate(size / 2, size / 2);
+  context.rotate(frame.eyeRotation);
+  context.lineCap = 'round';
+  drawEyeContour(context, size, frame.outline);
+  context.save();
   context.scale(frame.scale, frame.scale);
   context.rotate(frame.rotation);
   context.globalAlpha = frame.opacity;
@@ -124,9 +174,7 @@ export function drawPupilFrame(context, size, frame) {
   context.beginPath();
   context.arc(0, 0, radius * 0.38, 0, TAU);
   context.fill();
-  context.shadowColor = '#74d9f4';
-  context.shadowBlur = 7 + frame.pulse * 4;
-  ring(0.304, 0, TAU, '#78ccea', 1.6, 0.5 + frame.pulse * 0.23);
-  ring(0.275, 0, TAU, '#c2f2ff', 1.1, 0.55);
+  // The center is only a fading light field, without a circular stroke or hard edge.
+  context.restore();
   context.restore();
 }

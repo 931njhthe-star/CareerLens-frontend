@@ -54,7 +54,8 @@
 
 .report-loading-eye {
   flex: none;
-  width: min(340px, 68vw, 40svh);
+  /* Square space contains the full outline at every angle, including vertical. */
+  width: min(520px, 100%, 51svh);
   aspect-ratio: 1;
   margin: 0;
   pointer-events: none;
